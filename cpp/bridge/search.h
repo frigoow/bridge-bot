@@ -36,6 +36,8 @@ struct SearchOptions {
     double q_blend = 0.0;         // weight on QGruModel values in raceMoves
     int q_taper_trick = 9;        // linearly taper q_blend to 0 by this 1-based trick
     double belief_temp = 1.0;
+    double fast_lik_weight = 0.0; // > 0: weight worlds by FastPolicy log-likelihood of hidden seats' past plays
+    double fast_lik_temp = 1.0;
     std::shared_ptr<const cardbot::FastPolicyModel> fast_policy;
     std::shared_ptr<const cardbot::QGruModel> q_model;
     std::shared_ptr<const cardbot::BeliefModel> belief_model;

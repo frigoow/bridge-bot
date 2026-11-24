@@ -85,6 +85,9 @@ struct BridgeWorldSource {
     const BridgeSampler& sampler;
     bool use_belief = false;
     std::array<std::array<double, 3>, kCards> belief_weights{};
+    const cardbot::FastPolicyModel* lik_policy = nullptr;
+    double lik_weight = 0.0;
+    double lik_temp = 1.0;
 
     double count() const { return sampler.count(); }
 
@@ -105,8 +108,55 @@ struct BridgeWorldSource {
         return sampler.sample(rng);
     }
 
-    bool weighted() const { return false; }
-    double logWeight(const std::array<Mask, 4>&) const { return 0.0; }
+    bool weighted() const { return lik_policy != nullptr && lik_weight > 0.0 && root.nPlies() > 0; }
+
+    /** Log-likelihood of hidden seats' past non-forced plays under `lik_policy` in this world. */
+    double logWeight(const std::array<Mask, 4>& hands) const {
+        if (!weighted()) return 0.0;
+        const BridgeGame wg = root.withRemainingHands(hands);
+        BridgeGame sim(wg.initialHands(), root.contract(), root.payoffMode());
+        const auto& hist = root.history();
+        const int n_plies = root.nPlies();
+        const int strain = root.contract().strain;
+        const auto& hseats = sampler.hiddenSeats();
+        const int nh = sampler.numHiddenSeats();
+        auto is_hidden = [&](int s) {
+            for (int k = 0; k < nh; ++k) if (hseats[std::size_t(k)] == s) return true;
+            return false;
+        };
+
+        thread_local std::vector<float> state(kBridgeStateDim), logits;
+        logits.resize(std::size_t(lik_policy->outDim()));
+        const double inv_t = 1.0 / std::max(lik_temp, 0.05);
+        double ll = 0.0;
+
+        for (int p = 0; p < n_plies; ++p) {
+            const int seat = int(hist[std::size_t(p)].seat);
+            const int played = int(hist[std::size_t(p)].card);
+            if (is_hidden(seat)) {
+                const Mask lm = sim.legalMask();
+                if (lm & (lm - 1)) {
+                    encodeBridgeState(sim, seat, state.data(), nullptr);
+                    lik_policy->forward(state.data(), logits.data());
+                    double mx = -1e30;
+                    for (Mask m = lm; m; m &= m - 1) {
+                        const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                        if (v > mx) mx = v;
+                    }
+                    double sum_e = 0.0;
+                    for (Mask m = lm; m; m &= m - 1) {
+                        const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                        sum_e += std::exp(v - mx);
+                    }
+                    const double vp = double(logits[std::size_t(canonCard(played, strain))]) * inv_t;
+                    ll += (vp - mx - std::log(std::max(sum_e, 1e-12)));
+                }
+            }
+            sim.apply(played);
+        }
+        return lik_weight * ll;
+    }
+
     bool hasPrior() const { return use_belief; }
 
     void addLogPrior(const std::array<Mask, 4>& hands, double& lw) const {
@@ -167,10 +217,10 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     }
     out.prior_card = prior;
 
-    // Build sampler + optional BeliefModel weights
+    // Build sampler + optional BeliefModel weights + optional FastPolicy play-likelihood
     const Observation obs = g.observe(seat);
     const BridgeSampler sampler(obs);
-    BridgeWorldSource src{g, sampler, false, {}};
+    BridgeWorldSource src{g, sampler, false, {}, fast, opt.fast_lik_weight, opt.fast_lik_temp};
     if (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) {
         std::vector<float> state(kBridgeStateDim);
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
