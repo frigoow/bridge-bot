@@ -45,6 +45,8 @@ Fetch established external opponents (BEN ONNX models + BBO PBN boards, and `bri
 
 ## Established Opponents & Baseline Ladder
 
+Full results, timings, and double-dummy diagnostics are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 Duplicate-deal mirrored pairs (A plays NS at table 1, EW at table 2 on the exact same 52 cards and contract; WBF IMPs/board ± 95% CI):
 
 | A vs B | Pairs | IMPs/board | Tricks/board | A ms/choice |
