@@ -1,0 +1,13 @@
+build/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+checkpoints/
+runs/
+external/
+*.bin
+*.pt
+*.onnx
+.vscode/
+.DS_Store

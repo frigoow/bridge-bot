@@ -1,0 +1,7 @@
+pybind11>=3.0
+cmake>=3.15
+numpy
+pytest
+torch
+onnxruntime
+scipy

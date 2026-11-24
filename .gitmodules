@@ -1,0 +1,6 @@
+[submodule "cardbot-framework"]
+	path = cardbot-framework
+	url = https://github.com/frigoow/cardbot-framework.git
+[submodule "third_party/dds"]
+	path = third_party/dds
+	url = https://github.com/dds-bridge/dds.git
