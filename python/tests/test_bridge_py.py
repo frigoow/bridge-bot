@@ -151,3 +151,24 @@ def test_ben_onnx_opponent():
         assert c in g.legal_actions()
         g.apply(c)
     assert g.tricks_ns() + g.tricks_ew() == 13
+
+
+def test_collect_exit_dataset_and_train():
+    from cardbot.train import exit as cb_exit
+
+    raw = bridge_cpp.collect_exit_dataset(
+        num_deals=4, worlds=4, endgame_tricks=4, root_exact_tricks=4, seed=7, threads=2
+    )
+    n = len(raw["n_legal"])
+    assert n >= 40
+    assert raw["state"].shape == (n, 570)
+    assert raw["q_targets"].shape == (n, 13)
+    assert raw["legal_slots"].shape == (n, 13)
+    ds = cb_exit.concat_chunks([raw])
+    q = QGRU(570, 66, 76, state_hidden=64, gru_hidden=32, act_hidden=32, adv_hidden=64)
+    b = BeliefNet(570, 66, n_cards=52, n_seats=3, state_hidden=48, gru_hidden=24)
+    f = FastPolicy(570, 52, h1=64, h2=32)
+    aug = SuitPermAugmenter("cpu")
+    cfg = cb_exit.ExitConfig(epochs=2, batch_size=32, log=None, device="cpu")
+    m = cb_exit.train(ds, q, cfg, belief_model=b, fast_model=f, augment=aug.permute_dmc_batch)
+    assert m["q_mse"] >= 0.0 and m["belief_ce"] > 0.0 and m["fast_ce"] > 0.0

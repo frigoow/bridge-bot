@@ -53,7 +53,14 @@ def _build_index_tables(perms: list[tuple[int, int, int, int]]) -> dict[str, tor
             ply_idx[pi, 60 + new_s] = 60 + old_s
             act_idx[pi, 52 + new_s] = 52 + old_s
 
-    return {"state": state_idx, "ply": ply_idx, "act": act_idx, "card": card_idx}
+    # Forward card map: fwd_card[pi, old_card] = new_card (for permuting card-slot indices like legal_slots)
+    fwd_card = torch.zeros((n, 52), dtype=torch.long)
+    for pi, perm in enumerate(perms):
+        for old_s, new_s in enumerate(perm):
+            for r in range(13):
+                fwd_card[pi, old_s * 13 + r] = new_s * 13 + r
+
+    return {"state": state_idx, "ply": ply_idx, "act": act_idx, "card": card_idx, "fwd_card": fwd_card}
 
 
 class SuitPermAugmenter:
@@ -70,6 +77,7 @@ class SuitPermAugmenter:
         self.ply_idx = tabs["ply"].to(dev)
         self.act_idx = tabs["act"].to(dev)
         self.card_idx = tabs["card"].to(dev)
+        self.fwd_card = tabs["fwd_card"].to(dev)
         self.device = dev
 
     def sample_perm_ids(self, state: torch.Tensor) -> torch.Tensor:
@@ -103,6 +111,11 @@ class SuitPermAugmenter:
             bm = batch["belief_marginals"]  # [B, 52, 3]
             c_idx = self.card_idx[pid].unsqueeze(-1).expand(-1, -1, bm.shape[2])
             out["belief_marginals"] = torch.gather(bm, 1, c_idx)
+        if "legal_slots" in batch:
+            ls = batch["legal_slots"]  # [B, K], -1 for padding
+            valid = ls >= 0
+            mapped = torch.gather(self.fwd_card[pid], 1, ls.clamp(min=0))
+            out["legal_slots"] = torch.where(valid, mapped, ls)
         return out
 
     def permute_distill_batch(self, state: torch.Tensor, mask: torch.Tensor, target: torch.Tensor):

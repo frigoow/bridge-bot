@@ -12,6 +12,7 @@
 #include "bridge/encoder.h"
 #include "bridge/sampler.h"
 #include "bridge/scoring.h"
+#include "bridge/search.h"
 #include "cardbot/eval.h"
 #include "cardbot/python.h"
 
@@ -19,10 +20,13 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace py = pybind11;
@@ -202,4 +206,163 @@ PYBIND11_MODULE(bridge_cpp, m) {
         return py::make_tuple(r.mean, r.ci95, r.a_better, r.a_tied);
     }, py::arg("a"), py::arg("b"), py::arg("pairs") = 100, py::arg("seed") = 1,
        py::arg("threads") = 8, py::arg("strain_filter") = -1);
+
+    // Multi-threaded C++ ExIt dataset collector: runs BridgeSearchAgent (CRN across all legal moves)
+    // and records state, history, actions, legal_slots, multi-action q_targets, and BeliefNet targets/marginals.
+    m.def("collect_exit_dataset",
+          [](int num_deals, int worlds, int endgame_tricks, int root_exact_tricks,
+             const std::string& fast_path, const std::string& belief_path, const std::string& q_path,
+             double q_blend, double lik_weight, double eps, std::uint64_t seed, int threads,
+             int strain_filter, float reward_scale) {
+              SearchOptions base_opt;
+              base_opt.worlds = std::max(1, worlds);
+              base_opt.endgame_tricks = endgame_tricks;
+              base_opt.root_exact_tricks = root_exact_tricks;
+              base_opt.use_dds_endgame = true;
+              base_opt.race = false;  // evaluate ALL legal actions with CRN so q_targets are complete
+              base_opt.z = -1.0;
+              base_opt.q_blend = q_blend;
+              base_opt.fast_lik_weight = lik_weight;
+              if (!fast_path.empty()) {
+                  auto fm = std::make_shared<cardbot::FastPolicyModel>();
+                  if (!fm->load(fast_path, "BRP1", -1, kBridgeStateDim, kBridgePolicyDim))
+                      throw std::runtime_error("collect_exit_dataset: cannot load fast " + fast_path);
+                  base_opt.fast_policy = fm;
+              }
+              if (!belief_path.empty()) {
+                  auto bm = std::make_shared<cardbot::BeliefModel>();
+                  if (!bm->load(belief_path, kCards, 3, "BRB1", -1, kBridgeStateDim, kBridgePlyDim))
+                      throw std::runtime_error("collect_exit_dataset: cannot load belief " + belief_path);
+                  base_opt.belief_model = bm;
+              }
+              if (!q_path.empty()) {
+                  auto qm = std::make_shared<cardbot::QGruModel>();
+                  if (!qm->load(q_path, "BRQ1", -1, kBridgeStateDim, kBridgePlyDim, kBridgeActionDim))
+                      throw std::runtime_error("collect_exit_dataset: cannot load q " + q_path);
+                  base_opt.q_model = qm;
+              }
+
+              struct Row {
+                  std::array<float, kBridgeStateDim> state{};
+                  std::vector<float> history;  // n_plies * kBridgePlyDim
+                  std::int32_t n_plies = 0;
+                  std::array<float, kBridgeMaxLegal * kBridgeActionDim> legal_actions{};
+                  std::array<std::int32_t, kBridgeMaxLegal> legal_slots{};
+                  std::array<float, kBridgeMaxLegal> q_targets{};
+                  std::int32_t n_legal = 0;
+                  std::array<std::int8_t, kCards> belief_targets{};
+                  std::array<float, kCards * 3> belief_marginals{};
+              };
+
+              const int nt = std::max(1, std::min(threads, num_deals));
+              std::vector<std::vector<Row>> per_thread(std::size_t(nt));
+              std::atomic<int> next_deal{0};
+
+              {
+                  py::gil_scoped_release rel;
+                  auto worker = [&](int tid) {
+                      auto& buf = per_thread[std::size_t(tid)];
+                      buf.reserve(std::size_t((num_deals / nt + 4) * 24));
+                      std::uniform_real_distribution<double> u01(0.0, 1.0);
+                      for (int d; (d = next_deal++) < num_deals;) {
+                          const std::uint64_t ds = seed * 0x9E3779B97F4A7C15ull + std::uint64_t(d);
+                          std::mt19937_64 rng(ds);
+                          BridgeGame g = randomBridgeGame(rng, BridgeGame::PayoffMode::kDuplicateScore, strain_filter);
+                          const int strain = g.contract().strain;
+                          while (!g.finished()) {
+                              const auto legal = g.legalActions();
+                              if (legal.size() <= 1) {
+                                  g.apply(legal[0]);
+                                  continue;
+                              }
+                              const int seat = g.toMove();
+                              const SearchResult sr = searchCard(g, base_opt, rng);
+
+                              Row row;
+                              row.legal_slots.fill(-1);
+                              row.q_targets.fill(0.0f);
+                              row.n_legal = int(legal.size());
+                              row.history.resize(std::size_t(g.nPlies()) * kBridgePlyDim);
+                              row.n_plies = encodeBridgeState(g, seat, row.state.data(),
+                                                              row.history.empty() ? nullptr : row.history.data());
+                              for (std::size_t k = 0; k < legal.size(); ++k) {
+                                  encodeBridgeAction(g, seat, legal[k], row.legal_actions.data() + k * kBridgeActionDim);
+                                  row.legal_slots[k] = canonCard(legal[k], strain);
+                                  // Find CRN search value for legal[k]
+                                  double v = 0.0;
+                                  for (const auto& [mv, sc] : sr.values) {
+                                      if (mv == legal[k]) { v = sc; break; }
+                                  }
+                                  const float scaled = float(v) / reward_scale;
+                                  row.q_targets[k] = std::max(-4.0f, std::min(4.0f, scaled));
+                              }
+                              encodeBridgeBelief(g, seat, row.belief_targets.data(), row.belief_marginals.data());
+                              buf.push_back(std::move(row));
+
+                              int chosen = sr.card;
+                              if (eps > 0.0 && u01(rng) < eps) {
+                                  chosen = legal[rng() % legal.size()];
+                              }
+                              g.apply(chosen);
+                          }
+                      }
+                  };
+                  std::vector<std::thread> pool;
+                  for (int t = 1; t < nt; ++t) pool.emplace_back(worker, t);
+                  worker(0);
+                  for (auto& th : pool) th.join();
+              }
+
+              py::ssize_t total = 0;
+              for (const auto& v : per_thread) total += py::ssize_t(v.size());
+
+              py::array_t<float> state({total, py::ssize_t(kBridgeStateDim)});
+              py::array_t<float> history({total, py::ssize_t(kBridgeMaxPlies), py::ssize_t(kBridgePlyDim)});
+              py::array_t<std::int32_t> n_plies(total);
+              py::array_t<float> legal_actions({total, py::ssize_t(kBridgeMaxLegal), py::ssize_t(kBridgeActionDim)});
+              py::array_t<std::int32_t> legal_slots({total, py::ssize_t(kBridgeMaxLegal)});
+              py::array_t<float> q_targets({total, py::ssize_t(kBridgeMaxLegal)});
+              py::array_t<std::int32_t> n_legal(total);
+              py::array_t<std::int8_t> belief_targets({total, py::ssize_t(kCards)});
+              py::array_t<float> belief_marginals({total, py::ssize_t(kCards), py::ssize_t(3)});
+
+              std::memset(history.mutable_data(), 0, std::size_t(history.size()) * sizeof(float));
+              py::ssize_t idx = 0;
+              for (const auto& v : per_thread) {
+                  for (const auto& r : v) {
+                      std::memcpy(state.mutable_data(idx, 0), r.state.data(), kBridgeStateDim * sizeof(float));
+                      if (!r.history.empty()) {
+                          std::memcpy(history.mutable_data(idx, 0, 0), r.history.data(), r.history.size() * sizeof(float));
+                      }
+                      *n_plies.mutable_data(idx) = r.n_plies;
+                      std::memcpy(legal_actions.mutable_data(idx, 0, 0), r.legal_actions.data(),
+                                  kBridgeMaxLegal * kBridgeActionDim * sizeof(float));
+                      std::memcpy(legal_slots.mutable_data(idx, 0), r.legal_slots.data(),
+                                  kBridgeMaxLegal * sizeof(std::int32_t));
+                      std::memcpy(q_targets.mutable_data(idx, 0), r.q_targets.data(), kBridgeMaxLegal * sizeof(float));
+                      *n_legal.mutable_data(idx) = r.n_legal;
+                      std::memcpy(belief_targets.mutable_data(idx, 0), r.belief_targets.data(), kCards * sizeof(std::int8_t));
+                      std::memcpy(belief_marginals.mutable_data(idx, 0, 0), r.belief_marginals.data(),
+                                  kCards * 3 * sizeof(float));
+                      ++idx;
+                  }
+              }
+
+              py::dict out;
+              out["state"] = state;
+              out["history"] = history;
+              out["n_plies"] = n_plies;
+              out["legal_actions"] = legal_actions;
+              out["legal_slots"] = legal_slots;
+              out["q_targets"] = q_targets;
+              out["n_legal"] = n_legal;
+              out["belief_targets"] = belief_targets;
+              out["belief_marginals"] = belief_marginals;
+              return out;
+          },
+          py::arg("num_deals"), py::arg("worlds") = 16, py::arg("endgame_tricks") = 6,
+          py::arg("root_exact_tricks") = 6, py::arg("fast_path") = "", py::arg("belief_path") = "",
+          py::arg("q_path") = "", py::arg("q_blend") = 0.0, py::arg("lik_weight") = 0.0,
+          py::arg("eps") = 0.04, py::arg("seed") = 1, py::arg("threads") = 16,
+          py::arg("strain_filter") = -1, py::arg("reward_scale") = 500.0f);
 }
