@@ -149,6 +149,7 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
     if dd_bench:
         print(f"  Declarer tricks lost vs DD: A={dd_loss_a.mean():.3f} +- {1.96 * dd_loss_a.std(ddof=1) / math.sqrt(n):.3f}, "
               f"B={dd_loss_b.mean():.3f} +- {1.96 * dd_loss_b.std(ddof=1) / math.sqrt(n):.3f}")
+    return imp_mean
 
 
 def main():

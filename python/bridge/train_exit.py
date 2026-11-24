@@ -61,6 +61,7 @@ def main():
     ap.add_argument("--fast-h1", type=int, default=256)
     ap.add_argument("--fast-h2", type=int, default=128)
     ap.add_argument("--out-prefix", type=str, default="checkpoints/exit1")
+    ap.add_argument("--eval-pairs", type=int, default=200)
     ap.add_argument("--seed", type=int, default=101)
     args = ap.parse_args()
 
@@ -159,15 +160,15 @@ def main():
 
     # 3. Evaluate standalone networks vs rule & ben_nn
     for name, spec in [("QGRU", f"qgru:{q_bin}"), ("FastPolicy", f"fast:{f_bin}")]:
-        m, ci, w, t = bridge_cpp.duel_imps(spec, "rule", 100, 101, args.threads, sf)
-        print(f"  {name} vs rule (100 pairs): {m:+.2f} +- {ci:.2f} IMPs/bd (win {100*w:.1f}% / tie {100*t:.1f}%)",
+        m, ci, w, t = bridge_cpp.duel_imps(spec, "rule", args.eval_pairs, 101, args.threads, sf)
+        print(f"  {name} vs rule ({args.eval_pairs} pairs): {m:+.2f} +- {ci:.2f} IMPs/bd (win {100*w:.1f}% / tie {100*t:.1f}%)",
               flush=True)
 
     ben_onnx = ROOT / "external" / "ben" / "models" / "onnx" / "decl_nt.onnx"
     if ben_onnx.exists():
         from arena import run_arena
-        run_arena(f"qgru:{q_bin}", "ben_nn", 100, 303, None, sf, False, args.threads)
-        run_arena(f"fast:{f_bin}", "ben_nn", 100, 303, None, sf, False, args.threads)
+        run_arena(f"qgru:{q_bin}", "ben_nn", args.eval_pairs, 303, None, sf, False, args.threads)
+        run_arena(f"fast:{f_bin}", "ben_nn", args.eval_pairs, 303, None, sf, False, args.threads)
 
 
 if __name__ == "__main__":

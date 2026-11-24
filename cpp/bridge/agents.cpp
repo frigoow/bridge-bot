@@ -158,6 +158,10 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
                 o.q_blend = std::stod(p.substr(3));
             } else if (p.rfind("belief=", 0) == 0) {
                 o.belief_model = loadBelief(p.substr(7));
+            } else if (p.rfind("sbelief=", 0) == 0) {
+                o.suit_belief_model = loadBelief(p.substr(8));
+            } else if (p.rfind("nbelief=", 0) == 0) {
+                o.nt_belief_model = loadBelief(p.substr(8));
             } else if (p.rfind("lik=", 0) == 0) {
                 o.fast_lik_weight = std::stod(p.substr(4));
             } else if (p.rfind("likt=", 0) == 0) {

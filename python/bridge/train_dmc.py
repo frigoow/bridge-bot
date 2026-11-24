@@ -136,8 +136,17 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
             ben_onnx = ROOT / "external" / "ben" / "models" / "onnx" / "decl_nt.onnx"
             if ben_onnx.exists():
                 from arena import run_arena
-                run_arena(f"qgru:{self.out_q}", "ben_nn", self.eval_ben_pairs, 303, None,
-                          self.strain_filter, False, self.eval_threads)
+                ben_imp = run_arena(f"qgru:{self.out_q}", "ben_nn", self.eval_ben_pairs, 303, None,
+                                    self.strain_filter, False, self.eval_threads)
+                if ben_imp is not None and ben_imp > getattr(self, "best_ben_imp", -1e9):
+                    self.best_ben_imp = ben_imp
+                    best_ben = self.out_q.with_name(self.out_q.stem + "_best_ben.bin")
+                    self.model.export_bin(best_ben, tag=b"BRQ1", version=1)
+                    torch.save(self.model.state_dict(), best_ben.with_suffix(".pt"))
+                    if self.belief_model is not None and self.out_belief is not None:
+                        b_best = self.out_belief.with_name(self.out_belief.stem + "_best_ben.bin")
+                        self.belief_model.export_bin(b_best, tag=b"BRB1", version=1)
+                        torch.save(self.belief_model.state_dict(), b_best.with_suffix(".pt"))
                 sys.stdout.flush()
 
 
