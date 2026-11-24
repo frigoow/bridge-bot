@@ -97,6 +97,19 @@ Combined Suit + NT specialist search (`sfast`/`nfast` + `sq`/`nq`, 300 mirrored 
 | `search:18:pool=2:dds13:rex13:sfast/nfast:pb=0.05:lik=0.35:norace` vs `ben_dds:16` | 300 | −0.10 ± 0.47 | −0.05 ± 0.06 | 21.0% / 51.7% / 27.3% | 97.01 | 87.62 |
 | `search:24:pool=2:dds13:rex13:sfast/nfast:sbelief/nbelief:bt=2.5:pb=0.05:lik=0.35:norace` vs `ben_dds:16` | 300 | −0.10 ± 0.54 | +0.02 ± 0.06 | 24.3% / 50.0% / 25.7% | 123.53 | 89.12 |
 
+### Warm-Started Suit DMC Verification (512k Suit deals from `suit_exit2`, 9.7 min on RTX 3060)
+
+- `QGRU` vs `rule` (200 Suit pairs): `+1.77 ± 0.86` → **`+2.60 ± 0.76 IMPs/bd`** (`+0.83 IMPs/bd`).
+- `QGRU` vs `ben_nn` (200 Suit pairs): `-2.12 ± 0.77` → **`-1.89 ± 0.77 IMPs/bd`** (`-0.27` tricks, best at 410k).
+- Online `BeliefNet` CE on unseen Suit deals: `0.622` → **`0.5380`** (eliminated ExIt BeliefNet overfitting!).
+- Pure `FastNet + Search` (`48w:dds8:rex8`, **no trick-1 DDS**, 200 Suit pairs, seed `100`):
+
+| A vs B (Suit only) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `search:48:dds8:rex8:suit_exit2_fast:suit_exit2_q:qb=0.08:lik=0.25` vs `pimc_dds:16` | 200 | −0.36 ± 0.69 | −0.05 ± 0.07 | 21.5% / 45.5% / 33.0% | 53.81 | 96.88 |
+| **`search:48:dds8:rex8:suit_exit2_fast:suit_dmc_best_ben:suit_dmc_belief:qb=0.08:lik=0.25`** vs `pimc_dds:16` | 200 | **+0.69 ± 0.68** | **+0.08 ± 0.07** | **27.5% / 48.0% / 24.5%** | **51.05** | 96.53 |
+
+
 
 
 
