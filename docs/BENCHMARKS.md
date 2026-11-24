@@ -43,3 +43,18 @@ Real BBO tournament PBN (`external/ben/Boards/BBO/Ben & Friends Daily - 2024-07-
 | `search:48:dds6:rex6:fast_v1:belief_v1` vs `pimc_dds:16` | 100 | −1.08 ± 0.97 | −0.20 ± 0.11 | 14.0% / 44.0% / 42.0% | 77.85 | 82.41 |
 | `search:16:dds13:rex13:fast_v1:belief_v1:lik=0.25:norace` vs `pimc_dds:16` | 100 | +0.12 ± 0.85 | +0.03 ± 0.11 | 26.0% / 52.0% / 22.0% | 79.16 | 77.96 |
 
+### ExIt Gen 1 — 2,500 CRN search deals (102,621 states, `worlds=16, dds=8, rex=8`, 16 epochs via `cardbot.train.exit`, commit `006449b`)
+
+- Standalone `exit1_fast.bin` (`BRP1`, 46.1% top-1 vs search): `+0.96 ± 1.24 IMPs/bd` vs `rule`, `−4.13 ± 1.14 IMPs/bd` vs `ben_nn` (100 pairs).
+- Standalone `exit1_q.bin` (`BRQ1`, 49.2% top-1 vs search): `+0.64 ± 1.25 IMPs/bd` vs `rule`, `−4.38 ± 1.13 IMPs/bd` vs `ben_nn` (100 pairs).
+
+High-precision 300-mirrored-pair (600-deal) evaluations (seed `100`, all strains, `-march=native` SIMD):
+
+| A vs B | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `search:48:dds8:rex8:fast_exit1:belief_exit1` vs `rule` | 300 | +6.24 ± 0.62 | +0.89 ± 0.08 | 82.7% / 13.3% / 4.0% | 42.38 | 0.00 |
+| `search:48:dds8:rex8:fast_exit1:belief_exit1` vs `ben_nn` | 300 | **+1.03 ± 0.57** | **+0.17 ± 0.07** | 39.7% / 42.0% / 18.3% | 51.81 | 2.48 |
+| `search:48:dds8:rex8:fast_exit1:belief_exit1` vs `pimc_dds:16` | 300 | −0.46 ± 0.57 | −0.09 ± 0.07 | 25.7% / 38.7% / 35.7% | 38.57 | 87.93 |
+| `search:16:dds13:rex13:fast_exit1:belief_exit1:lik=0.25:norace` vs `pimc_dds:16` | 300 | +0.13 ± 0.53 | +0.03 ± 0.06 | 28.3% / 48.0% / 23.7% | 70.78 | 80.51 |
+
+
