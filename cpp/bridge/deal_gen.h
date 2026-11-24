@@ -114,8 +114,8 @@ inline Contract assignNaturalContract(const std::array<Mask, 4>& hands, std::mt1
         const int fit = len0[std::size_t(strain)] + len1[std::size_t(strain)];
         eff += std::max(0, fit - 7) * 2 + (distPoints(hands[std::size_t(s0)]) + distPoints(hands[std::size_t(s1)])) / 2;
     }
-    // Slight jitter (+/-1) to diversify partscore/game boundaries
-    eff += int(rng() % 3) - 1;
+    // Realistic bidding diversity (+/-2 HCP jitter so BeliefNet doesn't overfit rigid cutoffs)
+    eff += int(rng() % 5) - 2;
 
     int level = 1;
     if (strain == kNT) {
@@ -141,7 +141,7 @@ inline Contract assignNaturalContract(const std::array<Mask, 4>& hands, std::mt1
         else level = 1;
     }
 
-    // Declarer: hand with longer trump suit (or higher HCP in NT / tie)
+    // Declarer: usually hand with longer trump / higher HCP, ~20% chance partner declared first
     int decl = s0;
     if (strain != kNT) {
         if (len1[std::size_t(strain)] > len0[std::size_t(strain)]) decl = s1;
@@ -149,11 +149,13 @@ inline Contract assignNaturalContract(const std::array<Mask, 4>& hands, std::mt1
     } else {
         if (hcp[s1] > hcp[s0]) decl = s1;
     }
+    if (rng() % 5 == 0) decl = partnerOf(decl);
 
     c.level = level;
     c.strain = strain;
     c.declarer = decl;
-    c.doubled = 0;
+    // Occasional doubled contracts (~6%, mostly stretched games/partscores) so doubled scoring is trained
+    c.doubled = (rng() % 16 == 0) ? 1 : 0;
     return c;
 }
 

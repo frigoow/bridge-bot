@@ -17,6 +17,8 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT / "build") not in sys.path:
     sys.path.insert(0, str(ROOT / "build"))
+if str(ROOT / "tools" / "opponents") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools" / "opponents"))
 
 import bridge_cpp
 from cardbot.models import BeliefNet, QGRU
@@ -26,11 +28,12 @@ from bridge.suit_perm import SuitPermAugmenter
 
 class BridgeDMCTrainer(dmc.DMCTrainer):
     """DMCTrainer with Bridge 6x/24x suit-permutation augmentation, optional BeliefNet training,
-    and periodic C++ duplicate-deal IMP evaluation against `rule` and `pimc_dds`."""
+    and periodic C++ duplicate-deal IMP evaluation against `rule` and BEN ONNX (`ben_nn`)."""
 
     def __init__(self, env, model: QGRU, cfg: dmc.DMCConfig, out_q: Path, strain_filter: int = -1,
                  belief_model: BeliefNet | None = None, out_belief: Path | None = None,
-                 eval_every: int = 50, eval_pairs: int = 60, eval_opp: str = "rule"):
+                 eval_every: int = 50, eval_pairs: int = 100, eval_opp: str = "rule",
+                 eval_ben_every: int = 200, eval_ben_pairs: int = 100, eval_threads: int = 16):
         super().__init__(env, model, cfg)
         self.aug = SuitPermAugmenter(self.device)
         self.out_q = Path(out_q)
@@ -39,6 +42,9 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
         self.eval_every = eval_every
         self.eval_pairs = eval_pairs
         self.eval_opp = eval_opp
+        self.eval_ben_every = eval_ben_every
+        self.eval_ben_pairs = eval_ben_pairs
+        self.eval_threads = eval_threads
         self.best_imp = -1e9
 
         self.belief_model = belief_model.to(self.device) if belief_model is not None else None
@@ -108,7 +114,7 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
             torch.save(self.belief_model.state_dict(), self.out_belief.with_suffix(".pt"))
 
         imp_m, imp_ci, win, tie = bridge_cpp.duel_imps(
-            f"qgru:{self.out_q}", self.eval_opp, self.eval_pairs, 101, 8, self.strain_filter
+            f"qgru:{self.out_q}", self.eval_opp, self.eval_pairs, 101, self.eval_threads, self.strain_filter
         )
         bmsg = f" | belief_ce={self.last_belief_ce:.4f}" if self.belief_model is not None else ""
         print(
@@ -121,6 +127,18 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
             best_path = self.out_q.with_name(self.out_q.stem + "_best.bin")
             self.model.export_bin(best_path, tag=b"BRQ1", version=1)
             torch.save(self.model.state_dict(), best_path.with_suffix(".pt"))
+            if self.belief_model is not None and self.out_belief is not None:
+                b_best = self.out_belief.with_name(self.out_belief.stem + "_best.bin")
+                self.belief_model.export_bin(b_best, tag=b"BRB1", version=1)
+                torch.save(self.belief_model.state_dict(), b_best.with_suffix(".pt"))
+
+        if self.eval_ben_every > 0 and (self.round_idx % self.eval_ben_every == 0 or is_last):
+            ben_onnx = ROOT / "external" / "ben" / "models" / "onnx" / "decl_nt.onnx"
+            if ben_onnx.exists():
+                from arena import run_arena
+                run_arena(f"qgru:{self.out_q}", "ben_nn", self.eval_ben_pairs, 303, None,
+                          self.strain_filter, False, self.eval_threads)
+                sys.stdout.flush()
 
 
 def make_env(mode: str, envs: int, seed: int, threads: int):
@@ -153,8 +171,11 @@ def main():
     ap.add_argument("--out-belief", type=str, default="checkpoints/belief_all.bin")
     ap.add_argument("--resume", type=str, default=None, help="Optional .pt state_dict to warm-start from")
     ap.add_argument("--eval-every", type=int, default=50)
-    ap.add_argument("--eval-pairs", type=int, default=60)
+    ap.add_argument("--eval-pairs", type=int, default=100)
     ap.add_argument("--eval-opp", type=str, default="rule")
+    ap.add_argument("--eval-ben-every", type=int, default=200)
+    ap.add_argument("--eval-ben-pairs", type=int, default=100)
+    ap.add_argument("--eval-threads", type=int, default=16)
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args()
 
@@ -194,6 +215,8 @@ def main():
         env, model, cfg, out_q=Path(args.out), strain_filter=strain_filter,
         belief_model=belief, out_belief=Path(args.out_belief) if args.train_belief else None,
         eval_every=args.eval_every, eval_pairs=args.eval_pairs, eval_opp=args.eval_opp,
+        eval_ben_every=args.eval_ben_every, eval_ben_pairs=args.eval_ben_pairs,
+        eval_threads=args.eval_threads,
     )
     trainer.run()
     model.export_bin(args.out, tag=b"BRQ1", version=1)
