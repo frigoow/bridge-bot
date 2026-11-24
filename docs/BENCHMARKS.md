@@ -57,4 +57,18 @@ High-precision 300-mirrored-pair (600-deal) evaluations (seed `100`, all strains
 | `search:48:dds8:rex8:fast_exit1:belief_exit1` vs `pimc_dds:16` | 300 | −0.46 ± 0.57 | −0.09 ± 0.07 | 25.7% / 38.7% / 35.7% | 38.57 | 87.93 |
 | `search:16:dds13:rex13:fast_exit1:belief_exit1:lik=0.25:norace` vs `pimc_dds:16` | 300 | +0.13 ± 0.53 | +0.03 ± 0.06 | 28.3% / 48.0% / 23.7% | 70.78 | 80.51 |
 
+### ExIt Gen 2 — 6,000 CRN search deals (246,332 states, `worlds=16, dds=10, rex=10, exit1_fast, exit1_belief, lik=0.20`, 16 epochs)
+
+- Standalone `exit2_fast.bin` (`BRP1`, 48.2% top-1 vs search): `+1.47 ± 1.10 IMPs/bd` vs `rule` (50% win / 31% tie), `−3.06 ± 1.18 IMPs/bd` vs `ben_nn` (100 pairs).
+- Standalone `exit2_q.bin` (`BRQ1`, 53.3% top-1 vs search): `+0.99 ± 1.25 IMPs/bd` vs `rule`, `−3.33 ± 1.09 IMPs/bd` vs `ben_nn` (100 pairs); `belief_ce = 0.5457`.
+
+High-precision 200–300 mirrored-pair evaluations (seed `100`, all strains, `-march=native` SIMD):
+
+| A vs B | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `search:48:dds8:rex8:fast_exit2:belief_exit2` vs `…:fast_exit1:belief_exit1` | 300 | **+0.47 ± 0.57** | +0.05 ± 0.07 | 33.7% / 38.3% / 28.0% | 46.51 | 45.58 |
+| `search:48:dds8:rex8:fast_exit2:q_exit2:qb=0.08:belief_exit2` vs `pimc_dds:16` | 300 | **−0.04 ± 0.53** | **+0.01 ± 0.06** | **29.3% / 43.3% / 27.3%** | **40.02** | 87.88 |
+| `search:20:dds13:rex13:fast_exit2:q_exit2:qb=0.04:belief_exit2:lik=0.25:norace` vs `ben_dds:16` | 200 | **−0.16 ± 0.57** | **+0.02 ± 0.07** | **26.0% / 50.5% / 23.5%** | 95.79 | 87.94 |
+
+
 
