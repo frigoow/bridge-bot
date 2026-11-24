@@ -1,4 +1,5 @@
 #include "bridge/encoder.h"
+#include "bridge/sampler.h"
 
 #include <algorithm>
 #include <cstring>
@@ -180,6 +181,32 @@ void encodeBridgeAction(const BridgeGame& g, int seat, int card, float* out) {
     out[73] = is_ruff ? 1.0f : 0.0f;
     out[74] = partner_win ? 1.0f : 0.0f;
     out[75] = float(popcount(g.hand(seat) & suitMask(su))) / 13.0f;
+}
+
+void encodeBridgeBelief(const BridgeGame& g, int seat, std::int8_t* targets, float* marginals) {
+    std::fill(targets, targets + kCards, std::int8_t(-1));
+    std::memset(marginals, 0, std::size_t(kCards * 3) * sizeof(float));
+    if (g.finished()) return;
+    const Observation obs = g.observe(seat);
+    const BridgeSampler sampler(obs);
+    const auto m = sampler.cardMarginals();
+    const auto& hseats = sampler.hiddenSeats();
+    const int nh = sampler.numHiddenSeats();
+    const int strain = g.contract().strain;
+
+    for (int k = 0; k < nh; ++k) {
+        const int hs = hseats[std::size_t(k)];
+        for (Mask h = g.hand(hs); h; h &= h - 1) {
+            const int c = lowestCard(h);
+            targets[canonCard(c, strain)] = std::int8_t(k);
+        }
+    }
+    for (int c = 0; c < kCards; ++c) {
+        const int cc = canonCard(c, strain);
+        for (int k = 0; k < 3; ++k) {
+            marginals[cc * 3 + k] = float(m[std::size_t(c)][std::size_t(k)]);
+        }
+    }
 }
 
 }  // namespace bridge

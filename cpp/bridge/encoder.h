@@ -26,6 +26,12 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
 /** Encodes one legal action `card` for `seat` at state `g`. */
 void encodeBridgeAction(const BridgeGame& g, int seat, int card, float* out);
 
+/**
+ * Encodes BeliefNet targets [52] (hidden seat index 0..2, or -1 if visible/played) and
+ * exact BridgeSampler marginals [52, 3], both indexed by canonCard(card, strain).
+ */
+void encodeBridgeBelief(const BridgeGame& g, int seat, std::int8_t* targets, float* marginals);
+
 struct BridgeEncoder {
     static constexpr int kStateDim = kBridgeStateDim;
     static constexpr int kPlyDim = kBridgePlyDim;
@@ -33,6 +39,8 @@ struct BridgeEncoder {
     static constexpr int kActionDim = kBridgeActionDim;
     static constexpr int kMaxLegal = kBridgeMaxLegal;
     static constexpr int kPolicyDim = kBridgePolicyDim;
+    static constexpr int kBeliefCards = kCards;
+    static constexpr int kBeliefSeats = 3;
 
     int strain_filter = -1;      // -1 = all, 0 = suit only, 1 = NT only
     float reward_scale = 500.0f; // duplicate score / 500.0f (approx [-2, +2])
@@ -62,6 +70,10 @@ struct BridgeEncoder {
 
     int actionSlot(const BridgeGame& g, int /*seat*/, int card) const {
         return canonCard(card, g.contract().strain);
+    }
+
+    void encodeBelief(const BridgeGame& g, int seat, std::int8_t* targets, float* marginals) const {
+        encodeBridgeBelief(g, seat, targets, marginals);
     }
 
     float reward(const BridgeGame& g, int team) const {
