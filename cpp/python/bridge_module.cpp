@@ -159,6 +159,29 @@ PYBIND11_MODULE(bridge_cpp, m) {
         py::gil_scoped_release rel;
         return ddsCalcTable(hands);
     });
+    m.def("sample_worlds", [](const BridgeGame& g, int count, std::uint64_t seed) {
+        std::vector<BridgeGame> worlds;
+        {
+            py::gil_scoped_release rel;
+            const Observation obs = g.observe(g.toMove());
+            const BridgeSampler sampler(obs);
+            const double tot = sampler.count();
+            const int n = std::max(1, count);
+            std::vector<std::array<Mask, 4>> hands;
+            if (tot > 0.0 && tot <= double(n)) {
+                hands = sampler.enumerate(std::uint64_t(n));
+            } else {
+                std::mt19937_64 rng(seed);
+                hands.reserve(std::size_t(n));
+                for (int i = 0; i < n; ++i) {
+                    if (auto h = sampler.sample(rng)) hands.push_back(*h);
+                }
+            }
+            worlds.reserve(hands.size());
+            for (const auto& h : hands) worlds.push_back(g.withRemainingHands(h));
+        }
+        return worlds;
+    }, py::arg("game"), py::arg("count") = 16, py::arg("seed") = 1);
 
     // Fast C++ duplicate-deal duel returning (imp_mean, imp_ci95, a_win, a_tie)
     m.def("duel_imps", [](const std::string& spec_a, const std::string& spec_b, int pairs,

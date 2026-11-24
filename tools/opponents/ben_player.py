@@ -195,3 +195,52 @@ class BenOnnxPlayer:
             return legal[0]
         scores = self.card_scores52(game)
         return max(legal, key=lambda c: scores[c])
+
+
+class BenDdsPlayer:
+    """BEN neural card-play policy + DDS evaluation over sampled worlds (BEN tournament style).
+
+    Combines BEN's ONNX neural network preference with expected duplicate score from
+    Bo Haglund's DDS across `worlds` consistent sampled worlds (matching BEN's
+    `pick_card_after_dd_eval`: DDS expected score + small NN tiebreak/prior weight).
+    """
+
+    def __init__(self, bridge_cpp_mod, worlds: int = 16, nn_weight: float = 20.0,
+                 seed: int = 1, ben_root: str | Path | None = None):
+        self.cpp = bridge_cpp_mod
+        self.nn = BenOnnxPlayer(ben_root=ben_root)
+        self.worlds = max(1, worlds)
+        self.nn_weight = nn_weight
+        self.seed = seed
+        self._step = 0
+
+    def act(self, game) -> int:
+        legal = game.legal_actions()
+        if len(legal) == 1:
+            return legal[0]
+        self._step += 1
+        nn_scores = self.nn.card_scores52(game)
+        # Opening lead (ply 0): BEN uses its dedicated opening-lead NN + DDS over sampled worlds
+        worlds = self.cpp.sample_worlds(game, self.worlds, self.seed * 1000003 + self._step)
+        if not worlds:
+            return max(legal, key=lambda c: nn_scores[c])
+
+        c = game.contract()
+        seat = game.to_move()
+        seat_is_decl = (game.team(seat) == c.declarer_team())
+        rem_total = 13 - (game.n_plies() // 4)
+        decl_so_far = game.decl_tricks()
+        decl_vul = c.declarer_vul()
+
+        dd_sum = {card: 0.0 for card in legal}
+        for wg in worlds:
+            for card, rem_tr in self.cpp.dds_solve_moves(wg):
+                if card not in dd_sum:
+                    continue
+                tot_decl = (decl_so_far + rem_tr) if seat_is_decl else (decl_so_far + (rem_total - rem_tr))
+                ds = self.cpp.contract_score(c.level, c.strain, c.doubled, decl_vul, tot_decl)
+                dd_sum[card] += float(ds if seat_is_decl else -ds)
+
+        inv_w = 1.0 / len(worlds)
+        return max(legal, key=lambda card: dd_sum[card] * inv_w + self.nn_weight * nn_scores[card])
+

@@ -10,8 +10,10 @@ Example:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -22,18 +24,47 @@ sys.path.insert(0, str(ROOT / "build"))
 sys.path.insert(0, str(ROOT / "tools" / "opponents"))
 
 import bridge_cpp
-from ben_player import BenOnnxPlayer
+from ben_player import BenDdsPlayer, BenOnnxPlayer
 
 
-def make_player(spec: str, seed: int):
+def make_player_factory(spec: str):
+    """Returns a per-thread factory fn(seed) -> callable(game) -> card."""
     if spec == "ben_nn":
-        ben = BenOnnxPlayer()
-        return lambda g: ben.act(g)
-    agent = bridge_cpp.Agent(spec, seed)
-    return lambda g: agent.act(g)
+        # Reuse a shared thread-safe ONNX session per thread lazily
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben"):
+                local.ben = BenOnnxPlayer(threads=1)
+            ben = local.ben
+            return lambda g: ben.act(g)
+
+        return factory
+
+    if spec == "ben_dds" or spec.startswith("ben_dds:"):
+        w = int(spec.split(":", 1)[1]) if ":" in spec else 16
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben"):
+                local.ben = BenDdsPlayer(bridge_cpp, worlds=w, seed=seed)
+            else:
+                local.ben.seed = seed
+                local.ben._step = 0
+            ben = local.ben
+            return lambda g: ben.act(g)
+
+        return factory
+
+    def factory(seed: int):
+        agent = bridge_cpp.Agent(spec, seed)
+        return lambda g: agent.act(g)
+
+    return factory
 
 
-def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, strain: int, dd_bench: bool):
+def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, strain: int,
+              dd_bench: bool, threads: int = 8):
     if pbn:
         games = bridge_cpp.load_pbn(pbn, False, deals, seed)
         if not games:
@@ -41,30 +72,28 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
     else:
         games = [bridge_cpp.random_game(seed * 0x9E3779B97F4A7C15 + i, strain) for i in range(deals)]
 
-    player_a = make_player(spec_a, seed + 11)
-    player_b = make_player(spec_b, seed + 29)
+    fac_a = make_player_factory(spec_a)
+    fac_b = make_player_factory(spec_b)
 
-    imps = []
-    tricks = []
-    dd_loss_a = []
-    dd_loss_b = []
-    t_a = t_b = 0.0
-    m_a = m_b = 0
-
-    wall0 = time.perf_counter()
-    for i, base in enumerate(games):
+    def play_pair(item):
+        i, base = item
         dd_decl = bridge_cpp.dds_total_declarer_tricks(base) if dd_bench else -1
         score_a = [0.0, 0.0]
         trick_a = [0.0, 0.0]
+        la = lb = 0.0
+        t_a = t_b = 0.0
+        m_a = m_b = 0
         for table in (0, 1):
             g = base.copy()
-            a_team = table  # table 0: A is NS (0); table 1: A is EW (1)
+            a_team = table
+            pa = fac_a(seed * 1000003 + i * 2 + table + 11)
+            pb = fac_b(seed * 1000003 + i * 2 + table + 29)
             while not g.finished():
                 seat = g.to_move()
                 is_a = (g.team(seat) == a_team)
                 has_choice = len(g.legal_actions()) > 1
                 t0 = time.perf_counter()
-                card = player_a(g) if is_a else player_b(g)
+                card = pa(g) if is_a else pb(g)
                 dt = time.perf_counter() - t0
                 if has_choice:
                     if is_a:
@@ -78,16 +107,31 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
             trick_a[table] = (g.tricks_ns() if a_team == 0 else g.tricks_ew()) - 6.5
             if dd_bench:
                 if a_team == base.contract().declarer_team():
-                    dd_loss_a.append(dd_decl - g.decl_tricks())
+                    la = float(dd_decl - g.decl_tricks())
                 else:
-                    dd_loss_b.append(dd_decl - g.decl_tricks())
+                    lb = float(dd_decl - g.decl_tricks())
+        imp = float(bridge_cpp.imp_from_diff(int(round(score_a[0] + score_a[1]))))
+        tr = 0.5 * (trick_a[0] + trick_a[1])
+        return imp, tr, la, lb, t_a, t_b, m_a, m_b
 
-        imps.append(float(bridge_cpp.imp_from_diff(int(round(score_a[0] + score_a[1])))))
-        tricks.append(0.5 * (trick_a[0] + trick_a[1]))
-
+    wall0 = time.perf_counter()
+    nt = max(1, min(threads, len(games)))
+    if nt == 1:
+        results = [play_pair(it) for it in enumerate(games)]
+    else:
+        with ThreadPoolExecutor(max_workers=nt) as ex:
+            results = list(ex.map(play_pair, enumerate(games)))
     wall = time.perf_counter() - wall0
-    imps_arr = np.array(imps)
-    tr_arr = np.array(tricks)
+
+    imps_arr = np.array([r[0] for r in results])
+    tr_arr = np.array([r[1] for r in results])
+    dd_loss_a = np.array([r[2] for r in results])
+    dd_loss_b = np.array([r[3] for r in results])
+    t_a = sum(r[4] for r in results)
+    t_b = sum(r[5] for r in results)
+    m_a = sum(r[6] for r in results)
+    m_b = sum(r[7] for r in results)
+
     n = len(imps_arr)
     imp_mean = float(imps_arr.mean())
     imp_ci = 1.96 * float(imps_arr.std(ddof=1)) / math.sqrt(n) if n > 1 else 0.0
@@ -97,29 +141,28 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
     ties = float((imps_arr == 0).mean()) * 100.0
     losses = 100.0 - wins - ties
 
-    print(f"Arena: A={spec_a}  vs  B={spec_b}  ({n} mirrored pairs, seed={seed}, {wall:.2f}s)")
+    print(f"Arena: A={spec_a}  vs  B={spec_b}  ({n} mirrored pairs, seed={seed}, threads={nt}, {wall:.2f}s)")
     print(f"  IMPs/board:   {imp_mean:+.3f} +- {imp_ci:.3f}   (A win {wins:.1f}% / tie {ties:.1f}% / loss {losses:.1f}%)")
     print(f"  Tricks/board: {tr_mean:+.3f} +- {tr_ci:.3f}")
     print(f"  Speed:        A={1e3 * t_a / max(1, m_a):.3f} ms/choice, B={1e3 * t_b / max(1, m_b):.3f} ms/choice")
     if dd_bench:
-        la = np.array(dd_loss_a, dtype=float)
-        lb = np.array(dd_loss_b, dtype=float)
-        print(f"  Declarer tricks lost vs DD: A={la.mean():.3f} +- {1.96 * la.std(ddof=1) / math.sqrt(len(la)):.3f}, "
-              f"B={lb.mean():.3f} +- {1.96 * lb.std(ddof=1) / math.sqrt(len(lb)):.3f}")
+        print(f"  Declarer tricks lost vs DD: A={dd_loss_a.mean():.3f} +- {1.96 * dd_loss_a.std(ddof=1) / math.sqrt(n):.3f}, "
+              f"B={dd_loss_b.mean():.3f} +- {1.96 * dd_loss_b.std(ddof=1) / math.sqrt(n):.3f}")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Duplicate-deal Bridge card-play arena (including BEN ONNX)")
-    ap.add_argument("--a", required=True, help="Agent A spec (e.g. rule, pimc_dds:16, search:32:dds6:rex6, ben_nn)")
+    ap.add_argument("--a", required=True, help="Agent A spec (e.g. rule, pimc_dds:16, search:32:dds6:rex6, ben_nn, ben_dds:16)")
     ap.add_argument("--b", required=True, help="Agent B spec")
     ap.add_argument("--deals", type=int, default=50)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--pbn", type=str, default=None, help="Optional PBN file of real deals")
     ap.add_argument("--strain", choices=["all", "suit", "nt"], default="all")
     ap.add_argument("--dd-bench", action="store_true")
     args = ap.parse_args()
     sf = {"all": -1, "suit": 0, "nt": 1}[args.strain]
-    run_arena(args.a, args.b, args.deals, args.seed, args.pbn, sf, args.dd_bench)
+    run_arena(args.a, args.b, args.deals, args.seed, args.pbn, sf, args.dd_bench, args.threads)
 
 
 if __name__ == "__main__":
