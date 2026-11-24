@@ -169,7 +169,8 @@ def main():
     ap.add_argument("--train-belief", action="store_true")
     ap.add_argument("--out", type=str, default="checkpoints/q_all.bin")
     ap.add_argument("--out-belief", type=str, default="checkpoints/belief_all.bin")
-    ap.add_argument("--resume", type=str, default=None, help="Optional .pt state_dict to warm-start from")
+    ap.add_argument("--resume", type=str, default=None, help="Optional QGRU .pt state_dict to warm-start from")
+    ap.add_argument("--resume-belief", type=str, default=None, help="Optional BeliefNet .pt state_dict to warm-start from")
     ap.add_argument("--eval-every", type=int, default=50)
     ap.add_argument("--eval-pairs", type=int, default=100)
     ap.add_argument("--eval-opp", type=str, default="rule")
@@ -194,6 +195,9 @@ def main():
     extra_keys = ()
     if args.train_belief:
         belief = BeliefNet(env.STATE_DIM, env.PLY_DIM, n_cards=52, n_seats=3, state_hidden=256, gru_hidden=128)
+        if args.resume_belief:
+            belief.load_state_dict(torch.load(args.resume_belief, map_location="cpu", weights_only=True))
+            print(f"Loaded warm-start belief weights from {args.resume_belief}")
         extra_keys = ("belief_targets", "belief_marginals")
 
     cfg = dmc.DMCConfig(

@@ -70,7 +70,8 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
         if not games:
             raise RuntimeError(f"No deals loaded from {pbn}")
     else:
-        games = [bridge_cpp.random_game(seed * 0x9E3779B97F4A7C15 + i, strain) for i in range(deals)]
+        games = [bridge_cpp.random_game((seed * 0x9E3779B97F4A7C15 + i) & 0xFFFFFFFFFFFFFFFF, strain)
+                 for i in range(deals)]
 
     fac_a = make_player_factory(spec_a)
     fac_b = make_player_factory(spec_b)
