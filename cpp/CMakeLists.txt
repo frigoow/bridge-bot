@@ -11,6 +11,12 @@ endif()
 
 option(BRIDGE_PYTHON "Build the pybind11 bridge_cpp module" OFF)
 option(BRIDGE_TESTS "Build the C++ unit tests" ON)
+option(BRIDGE_NATIVE "Enable -march=native SIMD (AVX2/FMA) for fast neural rollouts" ON)
+
+set(BRIDGE_OPT_FLAGS -O3)
+if(BRIDGE_NATIVE)
+    list(APPEND BRIDGE_OPT_FLAGS -march=native)
+endif()
 
 find_package(Threads REQUIRED)
 
@@ -35,12 +41,12 @@ add_library(bridge_lib STATIC
     bridge/agents.cpp
 )
 target_include_directories(bridge_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_compile_options(bridge_lib PRIVATE -O3 -Wall -Wextra)
+target_compile_options(bridge_lib PRIVATE ${BRIDGE_OPT_FLAGS} -Wall -Wextra)
 target_link_libraries(bridge_lib PUBLIC cardbot dds Threads::Threads)
 
 # 4. bridge_duel CLI
 add_executable(bridge_duel tools/duel.cpp)
-target_compile_options(bridge_duel PRIVATE -O3 -Wall -Wextra)
+target_compile_options(bridge_duel PRIVATE ${BRIDGE_OPT_FLAGS} -Wall -Wextra)
 target_link_libraries(bridge_duel PRIVATE bridge_lib)
 
 # 5. C++ unit tests
@@ -48,7 +54,7 @@ if(BRIDGE_TESTS)
     enable_testing()
     foreach(t test_rules test_sampler test_dds test_search)
         add_executable(bridge_${t} tests/${t}.cpp)
-        target_compile_options(bridge_${t} PRIVATE -O3 -Wall -Wextra)
+        target_compile_options(bridge_${t} PRIVATE ${BRIDGE_OPT_FLAGS} -Wall -Wextra)
         target_link_libraries(bridge_${t} PRIVATE bridge_lib)
         add_test(NAME ${t} COMMAND bridge_${t})
     endforeach()
@@ -59,6 +65,6 @@ if(BRIDGE_PYTHON)
     set(PYBIND11_FINDPYTHON ON)
     find_package(pybind11 CONFIG REQUIRED)
     pybind11_add_module(bridge_cpp python/bridge_module.cpp)
-    target_compile_options(bridge_cpp PRIVATE -O3 -Wall -Wextra)
+    target_compile_options(bridge_cpp PRIVATE ${BRIDGE_OPT_FLAGS} -Wall -Wextra)
     target_link_libraries(bridge_cpp PRIVATE bridge_lib)
 endif()

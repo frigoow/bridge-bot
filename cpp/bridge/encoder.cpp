@@ -21,14 +21,20 @@ bool isMasterRemaining(int card, Mask played_mask) {
 int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* history) {
     std::memset(state, 0, std::size_t(kBridgeStateDim) * sizeof(float));
 
-    const Observation obs = g.observe(seat);
-    const Contract& c = obs.contract;
+    const Contract& c = g.contract();
     const int strain = c.strain;
     const int dummy = c.dummy();
     const int decl = c.declarer;
+    const bool dummy_vis = g.dummyVisible();
+    const int decider = (seat == dummy) ? decl : seat;
+    const Mask own_hand = g.hand(seat);
+    const Mask dummy_hand = (dummy_vis || seat == dummy) ? g.hand(dummy) : 0;
+    const Mask decl_hand = (decider == decl) ? g.hand(decl) : 0;
+    const int n_plies = g.nPlies();
+    const auto& hist = g.history();
 
     // [0..52): observer's own hand
-    for (Mask m = obs.own_hand; m; m &= m - 1) {
+    for (Mask m = own_hand; m; m &= m - 1) {
         state[canonCard(lowestCard(m), strain)] = 1.0f;
     }
 
@@ -48,18 +54,18 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
             }
         }
     };
-    if (obs.dummy_visible || seat == dummy) writeKnown(dummy, obs.dummy_hand);
-    if (obs.decider == decl) writeKnown(decl, obs.declarer_hand);
+    if (dummy_vis || seat == dummy) writeKnown(dummy, dummy_hand);
+    if (decider == decl) writeKnown(decl, decl_hand);
 
     // [208..416): played cards by relative seat (4 x 52)
-    for (int i = 0; i < obs.n_plies; ++i) {
-        const PlayRecord& pr = obs.history[std::size_t(i)];
+    for (int i = 0; i < n_plies; ++i) {
+        const PlayRecord& pr = hist[std::size_t(i)];
         const int r = relSeat(int(pr.seat), seat);
         state[208 + r * 52 + canonCard(int(pr.card), strain)] = 1.0f;
     }
 
     // [416..468): current trick cards
-    const TrickState& tr = obs.cur_trick;
+    const TrickState& tr = g.currentTrick();
     for (int i = 0; i < tr.n; ++i) {
         state[416 + canonCard(tr.cards[std::size_t(i)], strain)] = 1.0f;
     }
@@ -81,9 +87,10 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
     state[540 + std::min(tr.n, 3)] = 1.0f;
 
     // [520..532): void suits for relative seats 1, 2, 3 (3 x 4 canon suits)
+    const auto& voids = g.allVoidSuits();
     for (int off = 1; off <= 3; ++off) {
         const int s = (seat + off) & 3;
-        const std::uint8_t vs = obs.void_suits[std::size_t(s)];
+        const std::uint8_t vs = voids[std::size_t(s)];
         for (int su = 0; su < 4; ++su) {
             if (vs & (1u << su)) {
                 state[520 + (off - 1) * 4 + canonSuit(su, strain)] = 1.0f;
@@ -93,7 +100,7 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
 
     // [549..556): contract info
     state[549] = (strain == kNT) ? 1.0f : 0.0f;
-    state[550] = obs.dummy_visible ? 1.0f : 0.0f;
+    state[550] = dummy_vis ? 1.0f : 0.0f;
     state[551] = float(c.level - 1) / 6.0f;
     state[552] = (c.doubled == 0) ? 0.0f : (c.doubled == 1 ? 0.5f : 1.0f);
     state[553] = c.declarerVul() ? 1.0f : 0.0f;
@@ -106,11 +113,11 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
 
     // [560..566): trick progress & contract target
     const int my_team = teamOf(seat);
-    const int our_tr = (my_team == 0) ? obs.tricks_ns : obs.tricks_ew;
-    const int opp_tr = (my_team == 0) ? obs.tricks_ew : obs.tricks_ns;
-    const int decl_tr = (c.declarerTeam() == 0) ? obs.tricks_ns : obs.tricks_ew;
-    const int def_tr = (c.declarerTeam() == 0) ? obs.tricks_ew : obs.tricks_ns;
-    const int rem_tr = 13 - (obs.n_plies / 4);
+    const int our_tr = (my_team == 0) ? g.tricksNS() : g.tricksEW();
+    const int opp_tr = (my_team == 0) ? g.tricksEW() : g.tricksNS();
+    const int decl_tr = (c.declarerTeam() == 0) ? g.tricksNS() : g.tricksEW();
+    const int def_tr = (c.declarerTeam() == 0) ? g.tricksEW() : g.tricksNS();
+    const int rem_tr = 13 - (n_plies / 4);
     const int decl_need = std::max(0, c.target() - decl_tr);
     const int def_need = std::max(0, (14 - c.target()) - def_tr);
 
@@ -122,19 +129,17 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
     state[565] = (decl_tr >= c.target()) ? 1.0f : 0.0f;
 
     // [566..570): unseen cards remaining per canonical suit / 13.0
-    Mask known = obs.played_mask | obs.own_hand;
-    if (obs.dummy_visible || seat == dummy) known |= obs.dummy_hand;
-    if (obs.decider == decl) known |= obs.declarer_hand;
+    const Mask known = g.playedMask() | own_hand | dummy_hand | decl_hand;
     const Mask unseen = kAllCards & ~known;
     for (int su = 0; su < 4; ++su) {
         state[566 + canonSuit(su, strain)] = float(popcount(unseen & suitMask(su))) / 13.0f;
     }
 
     // Play history [n_plies, kBridgePlyDim]
-    if (history && obs.n_plies > 0) {
-        std::memset(history, 0, std::size_t(obs.n_plies) * kBridgePlyDim * sizeof(float));
-        for (int i = 0; i < obs.n_plies; ++i) {
-            const PlayRecord& pr = obs.history[std::size_t(i)];
+    if (history && n_plies > 0) {
+        std::memset(history, 0, std::size_t(n_plies) * kBridgePlyDim * sizeof(float));
+        for (int i = 0; i < n_plies; ++i) {
+            const PlayRecord& pr = hist[std::size_t(i)];
             float* row = history + std::size_t(i) * kBridgePlyDim;
             row[canonCard(int(pr.card), strain)] = 1.0f;
             row[52 + relSeat(int(pr.seat), seat)] = 1.0f;
@@ -144,7 +149,7 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
             row[65] = (strain != kNT && suitOf(int(pr.card)) == strain) ? 1.0f : 0.0f;
         }
     }
-    return obs.n_plies;
+    return n_plies;
 }
 
 void encodeBridgeAction(const BridgeGame& g, int seat, int card, float* out) {

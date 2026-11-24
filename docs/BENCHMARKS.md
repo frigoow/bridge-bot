@@ -30,4 +30,16 @@ Real BBO tournament PBN (`external/ben/Boards/BBO/Ben & Friends Daily - 2024-07-
 
 ## 2. Learned Models & Hybrid Search
 
-*(Updated as DMC Q-GRU, BeliefNet, FastPolicy, and specialist runs complete.)*
+### v1 — 600k-deal unified DMC (`q_all_v1`, `belief_all_v1`, distilled `fast_all_v1`, ~10 min on RTX 3060, commit `77ef60e`)
+
+- Standalone `q_all_v1_best` (`BRQ1`): `+0.75 ± 1.28 IMPs/bd` vs `rule`, `−5.40 ± 1.02 IMPs/bd` vs `ben_nn`, `belief_ce = 0.5250`.
+- Distilled `fast_all_v1` (`BRP1`, 12 epochs, 73.7% top-1 agreement): `+0.52 ± 1.71 IMPs/bd` vs `rule` (60 pairs).
+
+| A vs B | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `search:32:dds6:rex6:fast_v1` vs `rule` | 100 | +6.59 ± 1.24 | +0.77 ± 0.14 | 80.0% / 13.0% / 7.0% | 58.81 | 0.00 |
+| `search:32:dds6:rex6:fast_v1` vs `search:32:dds6:rex6` *(rule playouts)* | 100 | +0.38 ± 1.32 | +0.10 ± 0.16 | 36.0% / 29.0% / 35.0% | 64.28 | 15.73 |
+| `search:48:dds6:rex6:fast_v1:belief_v1` vs `ben_nn` | 100 | +0.69 ± 1.18 | +0.04 ± 0.13 | 32.0% / 31.0% / 37.0% | 86.12 | 2.20 |
+| `search:48:dds6:rex6:fast_v1:belief_v1` vs `pimc_dds:16` | 100 | −1.08 ± 0.97 | −0.20 ± 0.11 | 14.0% / 44.0% / 42.0% | 77.85 | 82.41 |
+| `search:16:dds13:rex13:fast_v1:belief_v1:lik=0.25:norace` vs `pimc_dds:16` | 100 | +0.12 ± 0.85 | +0.03 ± 0.11 | 26.0% / 52.0% / 22.0% | 79.16 | 77.96 |
+
