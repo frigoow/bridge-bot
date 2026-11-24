@@ -255,7 +255,7 @@ PYBIND11_MODULE(bridge_cpp, m) {
               };
 
               const int nt = std::max(1, std::min(threads, num_deals));
-              std::vector<std::vector<Row>> per_thread(std::size_t(nt));
+              std::vector<std::vector<Row>> per_thread(static_cast<std::size_t>(nt));
               std::atomic<int> next_deal{0};
 
               {
