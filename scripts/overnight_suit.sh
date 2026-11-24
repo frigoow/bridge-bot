@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 mkdir -p runs checkpoints
 
 LOG="runs/overnight_suit_16m.log"
-exec > >(tee -a "$LOG") 2>&1
+exec > >(tee "$LOG") 2>&1
 
 echo "================================================================"
 echo "Overnight Suit-only DMC (16M) + ExIt3 Polish + 1000-pair Evals"
@@ -13,10 +13,11 @@ echo "Started: $(date)"
 echo "================================================================"
 
 echo ""
-echo "=== STAGE 1: 16,000,000 Suit DMC (warm-started from suit_exit2, BS=2048, RR=12) ==="
+echo "=== STAGE 1: 16,000,000 Suit DMC (warm-started from suit_exit2, BS=2048, RR=8) ==="
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 PYTHONPATH=build:python .venv/bin/python -u -m bridge.train_dmc \
   --mode suit --episodes 16000000 --envs 1024 --threads 16 \
-  --batch-size 2048 --replay-rounds 12 --mb-per-round 32 \
+  --batch-size 2048 --replay-rounds 8 --mb-per-round 24 \
   --lr 1.0e-4 --min-lr 1.5e-5 --eps-start 0.035 --eps-end 0.008 \
   --train-belief \
   --resume checkpoints/suit_exit2_q.pt \
