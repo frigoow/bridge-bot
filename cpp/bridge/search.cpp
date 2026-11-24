@@ -192,7 +192,32 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
 
     // Compute prior move (Q-net if available, else fast policy, else ruleCard)
     std::vector<double> q_vals;
+    std::vector<double> fast_probs;
     int prior = legal[0];
+    if (fast && (opt.policy_blend > 0.0 || !qnet)) {
+        thread_local std::vector<float> fstate(kBridgeStateDim), flogits;
+        flogits.resize(std::size_t(fast->outDim()));
+        encodeBridgeState(g, seat, fstate.data(), nullptr);
+        fast->forward(fstate.data(), flogits.data());
+        fast_probs.resize(legal.size());
+        double mx = -1e30;
+        std::size_t best_f = 0;
+        for (std::size_t k = 0; k < legal.size(); ++k) {
+            const double v = double(flogits[std::size_t(canonCard(legal[k], strain))]);
+            fast_probs[k] = v;
+            if (v > mx) {
+                mx = v;
+                best_f = k;
+            }
+        }
+        double sum_e = 0.0;
+        for (double& v : fast_probs) {
+            v = std::exp(std::max(-40.0, v - mx));
+            sum_e += v;
+        }
+        for (double& v : fast_probs) v /= std::max(sum_e, 1e-12);
+        if (!qnet) prior = legal[best_f];
+    }
     if (qnet) {
         std::vector<float> state(kBridgeStateDim);
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
@@ -210,9 +235,7 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
             if (q_vals[k] > q_vals[best_q]) best_q = k;
         }
         prior = legal[best_q];
-    } else if (fast) {
-        prior = fastPolicyCard(*fast, g);
-    } else {
+    } else if (!fast) {
         prior = ruleCard(g);
     }
     out.prior_card = prior;
@@ -283,7 +306,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     };
 
     cardbot::QBlend qb;
-    if (opt.q_blend > 0.0 && !q_vals.empty()) {
+    const bool use_q = (opt.q_blend > 0.0 && !q_vals.empty());
+    const bool use_p = (opt.policy_blend > 0.0 && !fast_probs.empty());
+    if (use_q || use_p) {
         const int trick1 = g.trickIndex() + 1;  // 1..13
         double taper = 1.0;
         if (opt.q_taper_trick > 1 && trick1 >= opt.q_taper_trick) {
@@ -291,10 +316,21 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
         } else if (opt.q_taper_trick > 1) {
             taper = double(opt.q_taper_trick - trick1) / double(opt.q_taper_trick - 1);
         }
-        qb.weight = opt.q_blend * taper;
-        qb.q = q_vals;
-        qb.center = true;
-        qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks) ? 6.5 : 500.0;
+        const double wq = use_q ? (opt.q_blend * taper) : 0.0;
+        const double wp = use_p ? opt.policy_blend : 0.0;
+        const double w_tot = std::min(0.95, wq + wp);
+        if (w_tot > 0.0) {
+            qb.q.assign(legal.size(), 0.0);
+            for (std::size_t i = 0; i < legal.size(); ++i) {
+                double acc = 0.0;
+                if (wq > 0.0) acc += wq * q_vals[i];
+                if (wp > 0.0) acc += wp * fast_probs[i];
+                qb.q[i] = acc / w_tot;
+            }
+            qb.weight = w_tot;
+            qb.center = true;
+            qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks) ? 6.5 : 500.0;
+        }
     }
 
     cardbot::RaceOptions ro;

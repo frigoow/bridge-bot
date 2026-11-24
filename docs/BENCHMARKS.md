@@ -70,5 +70,33 @@ High-precision 200–300 mirrored-pair evaluations (seed `100`, all strains, `-m
 | `search:48:dds8:rex8:fast_exit2:q_exit2:qb=0.08:belief_exit2` vs `pimc_dds:16` | 300 | **−0.04 ± 0.53** | **+0.01 ± 0.06** | **29.3% / 43.3% / 27.3%** | **40.02** | 87.88 |
 | `search:20:dds13:rex13:fast_exit2:q_exit2:qb=0.04:belief_exit2:lik=0.25:norace` vs `ben_dds:16` | 200 | **−0.16 ± 0.57** | **+0.02 ± 0.07** | **26.0% / 50.5% / 23.5%** | 95.79 | 87.94 |
 
+### Suit & NT Specialists — ExIt Gen 1 & Gen 2 (`suit_exit{1,2}`, `nt_exit{1,2}`, warm-started from `exit2`)
+
+Each specialist ran 2 generations of `cardbot.train.exit` (`4,000` deals Gen 1 → `8,000` deals Gen 2; `worlds=16, dds=10, rex=10, lik=0.20, kl_weight=0.30, kl_temp=0.05`; 6× plain-suit augmentation on Suit, 24× all-suit augmentation on NT).
+
+Standalone specialist progression (200 mirrored pairs per strain; `seed=101` vs `rule`, `seed=303` vs `ben_nn`):
+
+| Strain | Checkpoint | `QGRU` vs `rule` | `FastPolicy` vs `rule` | `QGRU` vs `ben_nn` | `FastPolicy` vs `ben_nn` | `Fast` Tricks vs `ben_nn` |
+|---|---|---:|---:|---:|---:|---:|
+| **Suit** | Unified `exit2` | +0.62 ± 0.88 | +1.71 ± 0.81 | −3.36 ± 0.74 | −2.28 ± 0.77 | −0.27 ± 0.08 |
+| **Suit** | `suit_exit1` (4k) | +0.64 ± 0.82 | +1.28 ± 0.85 | −2.15 ± 0.84 | −1.62 ± 0.74 | −0.18 ± 0.07 |
+| **Suit** | **`suit_exit2` (8k)** | **+1.77 ± 0.86** | **+2.44 ± 0.88** | **−2.12 ± 0.77** | **−0.40 ± 0.72** | **−0.07 ± 0.08** |
+| **NT** | Unified `exit2` | +0.84 ± 0.81 | +3.05 ± 0.68 | −3.54 ± 0.83 | −2.12 ± 0.68 | −0.40 ± 0.13 |
+| **NT** | `nt_exit1` (4k) | +2.42 ± 0.75 | +3.38 ± 0.73 | −1.71 ± 0.79 | −1.11 ± 0.69 | −0.18 ± 0.13 |
+| **NT** | **`nt_exit2` (8k)** | **+2.86 ± 0.70** | **+3.58 ± 0.75** | **−1.56 ± 0.72** | **−1.01 ± 0.68** | **−0.15 ± 0.14** |
+
+Combined Suit + NT specialist search (`sfast`/`nfast` + `sq`/`nq`, 300 mirrored pairs, seed `100`, all strains):
+
+| A vs B | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `search:48:dds8:rex8:sfast/nfast:sq/nq:sbelief/nbelief:qb=0.08:lik=0.25` vs `pimc_dds:16` | 300 | −0.01 ± 0.61 | −0.02 ± 0.07 | 27.0% / 42.7% / 30.3% | 48.11 | 92.53 |
+| **`search:48:dds8:rex8:sfast/nfast:sq/nq:qb=0.08:lik=0.25`** *(no trick-1 DDS!)* vs `pimc_dds:16` | 300 | **+0.32 ± 0.62** | **+0.03 ± 0.07** | 30.3% / 38.7% / 31.0% | **52.77** | 94.14 |
+| **`search:48:dds8:rex8:sfast/nfast:sq/nq:qb=0.08:lik=0.25`** *(no trick-1 DDS!)* vs `ben_dds:16` | 300 | **−0.25 ± 0.54** | **−0.05 ± 0.06** | 24.3% / 45.0% / 30.7% | **51.98** | 97.94 |
+| `search:20:dds13:rex13:sfast/nfast:sq/nq:sbelief/nbelief:qb=0.04:lik=0.25:norace` vs `ben_dds:16` | 300 | +0.01 ± 0.51 | +0.05 ± 0.06 | 30.7% / 44.0% / 25.3% | 94.66 | 88.75 |
+| **`search:20:dds13:rex13:sfast/nfast:sq/nq:qb=0.04:lik=0.25:norace`** vs `ben_dds:16` | 300 | **+0.04 ± 0.47** | **+0.02 ± 0.05** | **24.7% / 55.3% / 20.0%** | 111.73 | 89.27 |
+| `search:18:pool=2:dds13:rex13:sfast/nfast:pb=0.05:lik=0.35:norace` vs `ben_dds:16` | 300 | −0.10 ± 0.47 | −0.05 ± 0.06 | 21.0% / 51.7% / 27.3% | 97.01 | 87.62 |
+| `search:24:pool=2:dds13:rex13:sfast/nfast:sbelief/nbelief:bt=2.5:pb=0.05:lik=0.35:norace` vs `ben_dds:16` | 300 | −0.10 ± 0.54 | +0.02 ± 0.06 | 24.3% / 50.0% / 25.7% | 123.53 | 89.12 |
+
+
 
 
