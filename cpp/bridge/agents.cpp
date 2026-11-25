@@ -33,9 +33,11 @@ std::vector<std::string> splitColon(const std::string& s) {
     return parts;
 }
 
+bool validStateDim(int d) { return d == kBridgeStateDim || d == kBridgeAucStateDim; }
+
 std::shared_ptr<const cardbot::FastPolicyModel> loadFast(const std::string& path) {
     auto m = std::make_shared<cardbot::FastPolicyModel>();
-    if (!m->load(path, "BRP1", -1, kBridgeStateDim, kBridgePolicyDim)) {
+    if (!m->load(path, "BRP1", -1, 0, kBridgePolicyDim) || !validStateDim(m->stateDim())) {
         throw std::runtime_error("bridge::makeAgent: failed to load FastPolicy " + path);
     }
     return m;
@@ -43,7 +45,7 @@ std::shared_ptr<const cardbot::FastPolicyModel> loadFast(const std::string& path
 
 std::shared_ptr<const cardbot::QGruModel> loadQGru(const std::string& path) {
     auto m = std::make_shared<cardbot::QGruModel>();
-    if (!m->load(path, "BRQ1", -1, kBridgeStateDim, kBridgePlyDim, kBridgeActionDim)) {
+    if (!m->load(path, "BRQ1", -1, 0, kBridgePlyDim, kBridgeActionDim) || !validStateDim(m->stateDim())) {
         throw std::runtime_error("bridge::makeAgent: failed to load QGru " + path);
     }
     return m;
@@ -51,7 +53,7 @@ std::shared_ptr<const cardbot::QGruModel> loadQGru(const std::string& path) {
 
 std::shared_ptr<const cardbot::BeliefModel> loadBelief(const std::string& path) {
     auto m = std::make_shared<cardbot::BeliefModel>();
-    if (!m->load(path, kCards, 3, "BRB1", -1, kBridgeStateDim, kBridgePlyDim)) {
+    if (!m->load(path, kCards, 3, "BRB1", -1, 0, kBridgePlyDim) || !validStateDim(m->stateDim())) {
         throw std::runtime_error("bridge::makeAgent: failed to load BeliefModel " + path);
     }
     return m;
@@ -184,7 +186,24 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
 
     if (kind == "fast") {
         if (parts.size() < 2) throw std::invalid_argument("fast:<path>");
-        return cardbot::fastPolicyAgent<BridgeGame, BridgeEncoder>(loadFast(spec.substr(5)));
+        auto model = loadFast(spec.substr(5));
+        return [model](const BridgeGame& g, std::mt19937_64&) {
+            const auto legal = g.legalActions();
+            if (legal.size() == 1) return legal[0];
+            thread_local std::vector<float> state(kBridgeAucStateDim), logits;
+            state.resize(std::size_t(model->stateDim()));
+            logits.resize(std::size_t(model->outDim()));
+            encodeBridgeStateForDim(g, g.toMove(), model->stateDim(), state.data(), nullptr);
+            model->forward(state.data(), logits.data());
+            const int strain = g.contract().strain;
+            int best = legal[0];
+            float best_l = -1e30f;
+            for (int c : legal) {
+                const float l = logits[std::size_t(canonCard(c, strain))];
+                if (l > best_l) { best_l = l; best = c; }
+            }
+            return best;
+        };
     }
 
     if (kind == "qgru") {
@@ -193,8 +212,9 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
         return [model](const BridgeGame& g, std::mt19937_64&) {
             const auto legal = g.legalActions();
             if (legal.size() == 1) return legal[0];
-            thread_local std::vector<float> state(kBridgeStateDim), hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
-            const int np = encodeBridgeState(g, g.toMove(), state.data(), hist.data());
+            thread_local std::vector<float> state(kBridgeAucStateDim), hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
+            state.resize(std::size_t(model->stateDim()));
+            const int np = encodeBridgeStateForDim(g, g.toMove(), model->stateDim(), state.data(), hist.data());
             std::vector<float> act(legal.size() * kBridgeActionDim);
             for (std::size_t k = 0; k < legal.size(); ++k) {
                 encodeBridgeAction(g, g.toMove(), legal[k], act.data() + k * kBridgeActionDim);

@@ -33,9 +33,10 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
     def __init__(self, env, model: QGRU, cfg: dmc.DMCConfig, out_q: Path, strain_filter: int = -1,
                  belief_model: BeliefNet | None = None, out_belief: Path | None = None,
                  eval_every: int = 50, eval_pairs: int = 100, eval_opp: str = "rule",
-                 eval_ben_every: int = 200, eval_ben_pairs: int = 100, eval_threads: int = 16):
+                 eval_ben_every: int = 200, eval_ben_pairs: int = 100, eval_threads: int = 16,
+                 eval_ben_deals: str | None = None, eval_ben_spec: str = "ben_nn"):
         super().__init__(env, model, cfg)
-        self.aug = SuitPermAugmenter(self.device)
+        self.aug = SuitPermAugmenter(self.device, state_dim=env.STATE_DIM)
         self.out_q = Path(out_q)
         self.out_q.parent.mkdir(parents=True, exist_ok=True)
         self.strain_filter = strain_filter
@@ -45,6 +46,8 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
         self.eval_ben_every = eval_ben_every
         self.eval_ben_pairs = eval_ben_pairs
         self.eval_threads = eval_threads
+        self.eval_ben_deals = eval_ben_deals
+        self.eval_ben_spec = eval_ben_spec
         self.best_imp = -1e9
 
         self.belief_model = belief_model.to(self.device) if belief_model is not None else None
@@ -136,8 +139,8 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
             ben_onnx = ROOT / "external" / "ben" / "models" / "onnx" / "decl_nt.onnx"
             if ben_onnx.exists():
                 from arena import run_arena
-                ben_imp = run_arena(f"qgru:{self.out_q}", "ben_nn", self.eval_ben_pairs, 303, None,
-                                    self.strain_filter, False, self.eval_threads)
+                ben_imp = run_arena(f"qgru:{self.out_q}", self.eval_ben_spec, self.eval_ben_pairs, 303, None,
+                                    self.strain_filter, False, self.eval_threads, self.eval_ben_deals)
                 if ben_imp is not None and ben_imp > getattr(self, "best_ben_imp", -1e9):
                     self.best_ben_imp = ben_imp
                     best_ben = self.out_q.with_name(self.out_q.stem + "_best_ben.bin")
@@ -150,7 +153,21 @@ class BridgeDMCTrainer(dmc.DMCTrainer):
                 sys.stdout.flush()
 
 
+def load_state_dict_expand(model: torch.nn.Module, path: str) -> None:
+    """Loads state_dict, zero-padding extra input columns when expanding 570 -> 585 state_dim."""
+    sd = torch.load(path, map_location="cpu", weights_only=True)
+    cur = model.state_dict()
+    for k, v in list(sd.items()):
+        if k in cur and v.ndim == 2 and cur[k].ndim == 2 and v.shape[0] == cur[k].shape[0] and v.shape[1] < cur[k].shape[1]:
+            expanded = torch.zeros_like(cur[k])
+            expanded[:, : v.shape[1]] = v
+            sd[k] = expanded
+    model.load_state_dict(sd)
+
+
 def make_env(mode: str, envs: int, seed: int, threads: int):
+    if mode == "suit_auc":
+        return bridge_cpp.SuitAucBatchEnv(envs, seed=seed, threads=threads), 0
     if mode == "suit":
         return bridge_cpp.SuitBatchEnv(envs, seed=seed, threads=threads), 0
     if mode == "nt":
@@ -160,7 +177,9 @@ def make_env(mode: str, envs: int, seed: int, threads: int):
 
 def main():
     ap = argparse.ArgumentParser(description="Train Bridge QGRU (+ optional BeliefNet) with DMC")
-    ap.add_argument("--mode", choices=["all", "suit", "nt"], default="all")
+    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc"], default="all")
+    ap.add_argument("--ben-deals", type=str, default=None, help="BDP1 binary pool of BEN-bid deals for suit_auc")
+    ap.add_argument("--eval-ben-deals", type=str, default=None, help="BDP1 binary eval set for ben_nn_auc evals")
     ap.add_argument("--episodes", type=int, default=1_000_000)
     ap.add_argument("--envs", type=int, default=1024)
     ap.add_argument("--threads", type=int, default=8)
@@ -190,6 +209,11 @@ def main():
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
+    if args.ben_deals:
+        n_pool = bridge_cpp.load_ben_deal_pool(args.ben_deals)
+        if n_pool <= 0:
+            raise RuntimeError(f"Failed to load BEN deal pool {args.ben_deals}")
+        print(f"Loaded {n_pool:,} BEN-bid deals into C++ pool from {args.ben_deals}", flush=True)
     env, strain_filter = make_env(args.mode, args.envs, args.seed, args.threads)
     model = QGRU(
         env.STATE_DIM, env.PLY_DIM, env.ACTION_DIM,
@@ -197,16 +221,16 @@ def main():
         act_hidden=args.act_hidden, adv_hidden=args.adv_hidden,
     )
     if args.resume:
-        model.load_state_dict(torch.load(args.resume, map_location="cpu", weights_only=True))
-        print(f"Loaded warm-start weights from {args.resume}")
+        load_state_dict_expand(model, args.resume)
+        print(f"Loaded warm-start weights from {args.resume} (state_dim={env.STATE_DIM})", flush=True)
 
     belief = None
     extra_keys = ()
     if args.train_belief:
         belief = BeliefNet(env.STATE_DIM, env.PLY_DIM, n_cards=52, n_seats=3, state_hidden=256, gru_hidden=128)
         if args.resume_belief:
-            belief.load_state_dict(torch.load(args.resume_belief, map_location="cpu", weights_only=True))
-            print(f"Loaded warm-start belief weights from {args.resume_belief}")
+            load_state_dict_expand(belief, args.resume_belief)
+            print(f"Loaded warm-start belief weights from {args.resume_belief} (state_dim={env.STATE_DIM})", flush=True)
         extra_keys = ("belief_targets", "belief_marginals")
 
     cfg = dmc.DMCConfig(
@@ -224,12 +248,13 @@ def main():
         seed=args.seed,
         log_every=10,
     )
+    ben_spec = "ben_nn_auc" if args.eval_ben_deals else "ben_nn"
     trainer = BridgeDMCTrainer(
         env, model, cfg, out_q=Path(args.out), strain_filter=strain_filter,
         belief_model=belief, out_belief=Path(args.out_belief) if args.train_belief else None,
         eval_every=args.eval_every, eval_pairs=args.eval_pairs, eval_opp=args.eval_opp,
         eval_ben_every=args.eval_ben_every, eval_ben_pairs=args.eval_ben_pairs,
-        eval_threads=args.eval_threads,
+        eval_threads=args.eval_threads, eval_ben_deals=args.eval_ben_deals, eval_ben_spec=ben_spec,
     )
     trainer.run()
     model.export_bin(args.out, tag=b"BRQ1", version=1)

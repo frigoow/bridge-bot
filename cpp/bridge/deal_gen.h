@@ -15,6 +15,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <sstream>
@@ -387,6 +388,90 @@ inline std::vector<PbnDeal> loadPbnFile(const std::string& path, bool require_co
     }
     if (max_deals <= 0 || int(out.size()) < max_deals) flush();
     return out;
+}
+
+// ---- Compact binary pool of BEN-bid deals with precomputed bidinfo (BDP1) ----
+
+struct BenDealRecord {
+    std::array<Mask, 4> hands{};
+    std::int8_t level = 1;
+    std::int8_t strain = kNT;
+    std::int8_t declarer = kSouth;
+    std::int8_t doubled = 0;
+    std::uint8_t vul_ns = 0;
+    std::uint8_t vul_ew = 0;
+    std::uint8_t dealer = 0;
+    std::uint8_t n_calls = 0;
+    std::array<std::uint8_t, kMaxAuctionCalls> calls{};
+    std::array<std::array<float, 15>, 4> seat_bidinfo{};
+
+    BridgeGame toGame(BridgeGame::PayoffMode mode = BridgeGame::PayoffMode::kDuplicateScore) const {
+        Contract c;
+        c.level = int(level);
+        c.strain = int(strain);
+        c.declarer = int(declarer);
+        c.doubled = int(doubled);
+        c.vul_ns = (vul_ns != 0);
+        c.vul_ew = (vul_ew != 0);
+        c.auction.dealer = dealer;
+        c.auction.n_calls = n_calls;
+        c.auction.calls = calls;
+        c.seat_bidinfo = seat_bidinfo;
+        c.has_bidinfo = true;
+        return BridgeGame(hands, c, mode);
+    }
+};
+
+struct BenDealPool {
+    std::vector<BenDealRecord> deals;
+
+    bool load(const std::string& path, int max_deals = 0) {
+        deals.clear();
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return false;
+        char magic[4]{};
+        std::int32_t hdr[2]{};  // [version=1, count]
+        if (!in.read(magic, 4) || std::string(magic, 4) != "BDP1") return false;
+        if (!in.read(reinterpret_cast<char*>(hdr), sizeof(hdr))) return false;
+        if (hdr[0] != 1 || hdr[1] < 0) return false;
+        int n = hdr[1];
+        if (max_deals > 0 && max_deals < n) n = max_deals;
+        deals.resize(std::size_t(n));
+        for (int i = 0; i < n; ++i) {
+            auto& r = deals[std::size_t(i)];
+            if (!in.read(reinterpret_cast<char*>(r.hands.data()), 4 * sizeof(Mask))) return false;
+            std::int8_t meta[8]{};
+            if (!in.read(reinterpret_cast<char*>(meta), 8)) return false;
+            r.level = meta[0];
+            r.strain = meta[1];
+            r.declarer = meta[2];
+            r.doubled = meta[3];
+            r.vul_ns = std::uint8_t(meta[4]);
+            r.vul_ew = std::uint8_t(meta[5]);
+            r.dealer = std::uint8_t(meta[6]);
+            r.n_calls = std::uint8_t(meta[7]);
+            if (!in.read(reinterpret_cast<char*>(r.calls.data()), kMaxAuctionCalls)) return false;
+            if (!in.read(reinterpret_cast<char*>(r.seat_bidinfo.data()), 4 * 15 * sizeof(float))) return false;
+        }
+        return true;
+    }
+};
+
+inline std::shared_ptr<const BenDealPool>& globalBenDealPoolStorage() {
+    static std::shared_ptr<const BenDealPool> pool;
+    return pool;
+}
+
+inline int loadGlobalBenDealPool(const std::string& path, int max_deals = 0) {
+    auto p = std::make_shared<BenDealPool>();
+    if (!p->load(path, max_deals)) return -1;
+    const int n = int(p->deals.size());
+    globalBenDealPoolStorage() = std::move(p);
+    return n;
+}
+
+inline std::shared_ptr<const BenDealPool> globalBenDealPool() {
+    return globalBenDealPoolStorage();
 }
 
 }  // namespace bridge

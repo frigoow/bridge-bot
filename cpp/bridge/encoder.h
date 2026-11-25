@@ -14,6 +14,7 @@
 namespace bridge {
 
 inline constexpr int kBridgeStateDim = 570;
+inline constexpr int kBridgeAucStateDim = 585;  // 570 + 15 canonical bidinfo floats (hcp[3] + shp[3*4])
 inline constexpr int kBridgePlyDim = 66;
 inline constexpr int kBridgeMaxPlies = 52;
 inline constexpr int kBridgeActionDim = 76;
@@ -22,6 +23,15 @@ inline constexpr int kBridgePolicyDim = 52;
 
 /** Encodes observer's public+private state and play history; returns n_plies written. */
 int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* history);
+
+/** Encodes 585-dim state = 570-dim base + 15 canonical-suit BEN bidinfo features; returns n_plies. */
+int encodeBridgeAucState(const BridgeGame& g, int seat, float* state, float* history);
+
+/** Dispatches 570 vs 585 state encoding according to model's expected state_dim. */
+inline int encodeBridgeStateForDim(const BridgeGame& g, int seat, int state_dim, float* state, float* history) {
+    if (state_dim == kBridgeAucStateDim) return encodeBridgeAucState(g, seat, state, history);
+    return encodeBridgeState(g, seat, state, history);
+}
 
 /** Encodes one legal action `card` for `seat` at state `g`. */
 void encodeBridgeAction(const BridgeGame& g, int seat, int card, float* out);
@@ -96,6 +106,24 @@ struct BridgeSuitEncoder : BridgeEncoder {
 /** No-Trumps specialist encoder (all 4 suits symmetric). */
 struct BridgeNtEncoder : BridgeEncoder {
     BridgeNtEncoder() { strain_filter = 1; }
+};
+
+/** Auction-aware Suit (Trump) specialist encoder (585-dim, draws BEN-bid Trump deals from globalBenDealPool). */
+struct BridgeSuitAucEncoder : BridgeEncoder {
+    static constexpr int kStateDim = kBridgeAucStateDim;
+    BridgeSuitAucEncoder() { strain_filter = 0; }
+
+    BridgeGame newGame(std::mt19937_64& rng) const {
+        if (auto pool = globalBenDealPool(); pool && !pool->deals.empty()) {
+            const std::size_t idx = std::size_t(rng() % pool->deals.size());
+            return pool->deals[idx].toGame(BridgeGame::PayoffMode::kDuplicateScore);
+        }
+        return randomBridgeGame(rng, BridgeGame::PayoffMode::kDuplicateScore, 0);
+    }
+
+    int encode(const BridgeGame& g, int seat, float* state, float* history) const {
+        return encodeBridgeAucState(g, seat, state, history);
+    }
 };
 
 }  // namespace bridge

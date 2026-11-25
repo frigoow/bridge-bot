@@ -27,14 +27,15 @@ _PERMS_SUIT = [tuple([0] + list(p)) for p in itertools.permutations((1, 2, 3))] 
 _PERMS_NT = [tuple(p) for p in itertools.permutations((0, 1, 2, 3))]              # 24 perms (all 4 suits)
 
 
-def _build_index_tables(perms: list[tuple[int, int, int, int]]) -> dict[str, torch.Tensor]:
+def _build_index_tables(perms: list[tuple[int, int, int, int]], state_dim: int = STATE_DIM) -> dict[str, torch.Tensor]:
     """Build gather indices so out[..., i] = in[..., idx[p, i]] (maps suit s -> perm[s])."""
     n = len(perms)
-    state_idx = torch.arange(STATE_DIM, dtype=torch.long).unsqueeze(0).repeat(n, 1)
+    state_idx = torch.arange(state_dim, dtype=torch.long).unsqueeze(0).repeat(n, 1)
     ply_idx = torch.arange(PLY_DIM, dtype=torch.long).unsqueeze(0).repeat(n, 1)
     act_idx = torch.arange(ACTION_DIM, dtype=torch.long).unsqueeze(0).repeat(n, 1)
     card_idx = torch.arange(52, dtype=torch.long).unsqueeze(0).repeat(n, 1)
 
+    suit_blocks = _STATE_SUIT_BLOCKS + ((573, 577, 581) if state_dim >= 585 else ())
     for pi, perm in enumerate(perms):
         # inv[new_suit] = old_suit so gather puts old_suit at new_suit
         inv = [0] * 4
@@ -48,7 +49,7 @@ def _build_index_tables(perms: list[tuple[int, int, int, int]]) -> dict[str, tor
                     state_idx[pi, base + new_s * 13 + r] = base + old_s * 13 + r
                 ply_idx[pi, new_s * 13 + r] = old_s * 13 + r
                 act_idx[pi, new_s * 13 + r] = old_s * 13 + r
-            for base in _STATE_SUIT_BLOCKS:
+            for base in suit_blocks:
                 state_idx[pi, base + new_s] = base + old_s
             ply_idx[pi, 60 + new_s] = 60 + old_s
             act_idx[pi, 52 + new_s] = 52 + old_s
@@ -66,13 +67,13 @@ def _build_index_tables(perms: list[tuple[int, int, int, int]]) -> dict[str, tor
 class SuitPermAugmenter:
     """Applies random valid suit permutations (6x for Suit, 24x for NT) on GPU or CPU."""
 
-    def __init__(self, device: torch.device | str):
+    def __init__(self, device: torch.device | str, state_dim: int = STATE_DIM):
         dev = torch.device(device)
         # Put all 24 permutations in one table: first 6 are the suit-fixing ones!
         suit_set = set(_PERMS_SUIT)
         ordered = list(_PERMS_SUIT) + [p for p in _PERMS_NT if p not in suit_set]
         assert len(ordered) == 24
-        tabs = _build_index_tables(ordered)
+        tabs = _build_index_tables(ordered, state_dim=state_dim)
         self.state_idx = tabs["state"].to(dev)
         self.ply_idx = tabs["ply"].to(dev)
         self.act_idx = tabs["act"].to(dev)

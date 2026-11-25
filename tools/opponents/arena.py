@@ -29,6 +29,17 @@ from ben_player import BenDdsPlayer, BenOnnxPlayer
 
 def make_player_factory(spec: str):
     """Returns a per-thread factory fn(seed) -> callable(game) -> card."""
+    if spec == "ben_nn_auc":
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben"):
+                local.ben = BenOnnxPlayer(threads=1)
+            ben = local.ben
+            return lambda g: max(g.legal_actions(), key=lambda c: ben.card_scores52(g, use_auction=True)[c]) if len(g.legal_actions()) > 1 else g.legal_actions()[0]
+
+        return factory
+
     if spec == "ben_nn":
         # Reuse a shared thread-safe ONNX session per thread lazily
         local = threading.local()
@@ -129,11 +140,43 @@ def make_player_factory(spec: str):
 
 
 def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, strain: int,
-              dd_bench: bool, threads: int = 8):
-    if pbn:
+              dd_bench: bool, threads: int = 8, ben_deals_bin: str | None = None):
+    if ben_deals_bin:
+        games = bridge_cpp.load_ben_deals(ben_deals_bin, deals)
+        if strain == 0:
+            games = [g for g in games if g.contract().strain != 4]
+        elif strain == 1:
+            games = [g for g in games if g.contract().strain == 4]
+        if not games:
+            raise RuntimeError(f"No deals loaded from {ben_deals_bin}")
+    elif pbn:
         games = bridge_cpp.load_pbn(pbn, False, deals, seed)
+        if strain == 0:
+            games = [g for g in games if g.contract().strain != 4]
+        elif strain == 1:
+            games = [g for g in games if g.contract().strain == 4]
         if not games:
             raise RuntimeError(f"No deals loaded from {pbn}")
+        # If any auctioned PBN lacks precomputed bidinfo, populate it ONCE using BEN bidinfo.onnx!
+        if any(g.contract().has_auction() and not g.contract().has_bidinfo for g in games):
+            nn_tmp = BenOnnxPlayer(threads=1)
+            if nn_tmp.bidinfo is not None:
+                inp_name = nn_tmp.bidinfo.get_inputs()[0].name
+                enriched = []
+                for g in games:
+                    c = g.contract()
+                    if c.has_auction() and not c.has_bidinfo:
+                        bi_all = [[0.0] * 15 for _ in range(4)]
+                        ih = g.initial_hands()
+                        for s in range(4):
+                            h24 = nn_tmp._mask_to_hand24(ih[s])[None, :]
+                            X, _ = nn_tmp._build_auction_x(c.auction_calls, c.auction_dealer, s, h24, c.vul_ns, c.vul_ew)
+                            if X is not None:
+                                p_hcp, p_shp = nn_tmp.bidinfo.run(None, {inp_name: X})
+                                bi_all[s] = p_hcp[0, -1, :].tolist() + p_shp[0, -1, :].tolist()
+                        g = g.with_bidinfo(bi_all)
+                    enriched.append(g)
+                games = enriched
     else:
         games = [bridge_cpp.random_game((seed * 0x9E3779B97F4A7C15 + i) & 0xFFFFFFFFFFFFFFFF, strain)
                  for i in range(deals)]
@@ -225,11 +268,12 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--pbn", type=str, default=None, help="Optional PBN file of real deals")
+    ap.add_argument("--ben-deals", type=str, default=None, help="Precomputed BDP1 binary file of BEN-bid deals")
     ap.add_argument("--strain", choices=["all", "suit", "nt"], default="all")
     ap.add_argument("--dd-bench", action="store_true")
     args = ap.parse_args()
     sf = {"all": -1, "suit": 0, "nt": 1}[args.strain]
-    run_arena(args.a, args.b, args.deals, args.seed, args.pbn, sf, args.dd_bench, args.threads)
+    run_arena(args.a, args.b, args.deals, args.seed, args.pbn, sf, args.dd_bench, args.threads, args.ben_deals)
 
 
 if __name__ == "__main__":

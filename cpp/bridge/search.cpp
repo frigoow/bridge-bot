@@ -39,9 +39,10 @@ const cardbot::BeliefModel* pickBelief(const SearchOptions& opt, int strain) {
 int fastPolicyCard(const cardbot::FastPolicyModel& model, const BridgeGame& g) {
     const auto legal = g.legalActions();
     if (legal.size() == 1) return legal[0];
-    thread_local std::vector<float> state(kBridgeStateDim), logits;
+    thread_local std::vector<float> state(kBridgeAucStateDim), logits;
+    state.resize(std::size_t(model.stateDim()));
     logits.resize(std::size_t(model.outDim()));
-    encodeBridgeState(g, g.toMove(), state.data(), nullptr);
+    encodeBridgeStateForDim(g, g.toMove(), model.stateDim(), state.data(), nullptr);
     model.forward(state.data(), logits.data());
     const int strain = g.contract().strain;
     int best = legal[0];
@@ -165,7 +166,8 @@ struct BridgeWorldSource {
                 return false;
             };
 
-            thread_local std::vector<float> state(kBridgeStateDim), logits;
+            thread_local std::vector<float> state(kBridgeAucStateDim), logits;
+            state.resize(std::size_t(lik_policy->stateDim()));
             logits.resize(std::size_t(lik_policy->outDim()));
             const double inv_t = 1.0 / std::max(lik_temp, 0.05);
             double ll = 0.0;
@@ -176,7 +178,7 @@ struct BridgeWorldSource {
                 if (is_hidden(seat)) {
                     const Mask lm = sim.legalMask();
                     if (lm & (lm - 1)) {
-                        encodeBridgeState(sim, seat, state.data(), nullptr);
+                        encodeBridgeStateForDim(sim, seat, lik_policy->stateDim(), state.data(), nullptr);
                         lik_policy->forward(state.data(), logits.data());
                         double mx = -1e30;
                         for (Mask m = lm; m; m &= m - 1) {
@@ -237,9 +239,10 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     std::vector<double> fast_probs;
     int prior = legal[0];
     if (fast && (opt.policy_blend > 0.0 || !qnet)) {
-        thread_local std::vector<float> fstate(kBridgeStateDim), flogits;
+        thread_local std::vector<float> fstate(kBridgeAucStateDim), flogits;
+        fstate.resize(std::size_t(fast->stateDim()));
         flogits.resize(std::size_t(fast->outDim()));
-        encodeBridgeState(g, seat, fstate.data(), nullptr);
+        encodeBridgeStateForDim(g, seat, fast->stateDim(), fstate.data(), nullptr);
         fast->forward(fstate.data(), flogits.data());
         fast_probs.resize(legal.size());
         double mx = -1e30;
@@ -261,9 +264,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
         if (!qnet) prior = legal[best_f];
     }
     if (qnet) {
-        std::vector<float> state(kBridgeStateDim);
+        std::vector<float> state(std::size_t(qnet->stateDim()));
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
-        const int np = encodeBridgeState(g, seat, state.data(), hist.data());
+        const int np = encodeBridgeStateForDim(g, seat, qnet->stateDim(), state.data(), hist.data());
         std::vector<float> act(legal.size() * kBridgeActionDim);
         for (std::size_t k = 0; k < legal.size(); ++k) {
             encodeBridgeAction(g, seat, legal[k], act.data() + k * kBridgeActionDim);
@@ -305,9 +308,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     if (need_m_raw) m_raw = sampler.cardMarginals();
 
     if (use_bnet) {
-        std::vector<float> state(kBridgeStateDim);
+        std::vector<float> state(std::size_t(bnet->stateDim()));
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
-        const int np = encodeBridgeState(g, seat, state.data(), hist.data());
+        const int np = encodeBridgeStateForDim(g, seat, bnet->stateDim(), state.data(), hist.data());
         std::vector<float> marg_in(kCards * 3, 0.0f);
         for (int c = 0; c < kCards; ++c) {
             const int cc = canonCard(c, strain);
@@ -454,9 +457,10 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     std::vector<double> fast_probs;
     int prior = legal[0];
     if (fast && (opt.policy_blend > 0.0 || !qnet)) {
-        thread_local std::vector<float> fstate(kBridgeStateDim), flogits;
+        thread_local std::vector<float> fstate(kBridgeAucStateDim), flogits;
+        fstate.resize(std::size_t(fast->stateDim()));
         flogits.resize(std::size_t(fast->outDim()));
-        encodeBridgeState(g, seat, fstate.data(), nullptr);
+        encodeBridgeStateForDim(g, seat, fast->stateDim(), fstate.data(), nullptr);
         fast->forward(fstate.data(), flogits.data());
         fast_probs.resize(legal.size());
         double mx = -1e30;
@@ -475,9 +479,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
         if (!qnet) prior = legal[best_f];
     }
     if (qnet) {
-        std::vector<float> state(kBridgeStateDim);
+        std::vector<float> state(std::size_t(qnet->stateDim()));
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
-        const int np = encodeBridgeState(g, seat, state.data(), hist.data());
+        const int np = encodeBridgeStateForDim(g, seat, qnet->stateDim(), state.data(), hist.data());
         std::vector<float> act(legal.size() * kBridgeActionDim);
         for (std::size_t k = 0; k < legal.size(); ++k) {
             encodeBridgeAction(g, seat, legal[k], act.data() + k * kBridgeActionDim);
@@ -515,7 +519,8 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
         const auto& hist = g.history();
         const int n_plies = g.nPlies();
         const double inv_t = 1.0 / std::max(opt.fast_lik_temp, 0.05);
-        thread_local std::vector<float> pstate(kBridgeStateDim), plogits;
+        thread_local std::vector<float> pstate(kBridgeAucStateDim), plogits;
+        pstate.resize(std::size_t(fast->stateDim()));
         plogits.resize(std::size_t(fast->outDim()));
 
         std::vector<double> pll(nw, 0.0);
@@ -529,7 +534,7 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
                 if (is_hidden(ps)) {
                     const Mask lm = sim.legalMask();
                     if (lm & (lm - 1)) {
-                        encodeBridgeState(sim, ps, pstate.data(), nullptr);
+                        encodeBridgeStateForDim(sim, ps, fast->stateDim(), pstate.data(), nullptr);
                         fast->forward(pstate.data(), plogits.data());
                         double mx = -1e30;
                         for (Mask m = lm; m; m &= m - 1) {

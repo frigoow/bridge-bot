@@ -152,6 +152,26 @@ int encodeBridgeState(const BridgeGame& g, int seat, float* state, float* histor
     return n_plies;
 }
 
+int encodeBridgeAucState(const BridgeGame& g, int seat, float* state, float* history) {
+    const int n_plies = encodeBridgeState(g, seat, state, history);
+    std::memset(state + kBridgeStateDim, 0, 15 * sizeof(float));
+    const Contract& c = g.contract();
+    if (c.has_bidinfo) {
+        const auto& bi = c.seat_bidinfo[std::size_t(seat & 3)];
+        const int strain = c.strain;
+        for (int rel = 0; rel < 3; ++rel) state[570 + rel] = bi[std::size_t(rel)];
+        // BEN bidinfo suit order is [0=S, 1=H, 2=D, 3=C] -> our_suit = 3 - bs
+        for (int rel = 0; rel < 3; ++rel) {
+            for (int bs = 0; bs < 4; ++bs) {
+                const int our_s = 3 - bs;
+                const int cs = canonSuit(our_s, strain);
+                state[573 + rel * 4 + cs] = bi[std::size_t(3 + rel * 4 + bs)];
+            }
+        }
+    }
+    return n_plies;
+}
+
 void encodeBridgeAction(const BridgeGame& g, int seat, int card, float* out) {
     std::memset(out, 0, std::size_t(kBridgeActionDim) * sizeof(float));
     const int strain = g.contract().strain;

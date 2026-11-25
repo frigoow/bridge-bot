@@ -40,6 +40,7 @@ PYBIND11_MODULE(bridge_cpp, m) {
     cardbot::bindBatchEnv<BridgeGame, BridgeEncoder>(m, "BatchEnv");
     cardbot::bindBatchEnv<BridgeGame, BridgeSuitEncoder>(m, "SuitBatchEnv");
     cardbot::bindBatchEnv<BridgeGame, BridgeNtEncoder>(m, "NtBatchEnv");
+    cardbot::bindBatchEnv<BridgeGame, BridgeSuitAucEncoder>(m, "SuitAucBatchEnv");
     cardbot::bindQGru(m);
     cardbot::bindFastPolicy(m);
     cardbot::bindBeliefModel(m);
@@ -72,6 +73,14 @@ PYBIND11_MODULE(bridge_cpp, m) {
             for (int i = 0; i < int(c.auction.n_calls); ++i) c.auction.calls[std::size_t(i)] = std::uint8_t(calls[std::size_t(i)]);
         })
         .def("legal_call_mask", [](const Contract& c, int idx) { return c.auction.legalMaskAt(idx); })
+        .def_readwrite("has_bidinfo", &Contract::has_bidinfo)
+        .def("set_bidinfo", [](Contract& c, int seat, const std::array<float, 15>& bi) {
+            c.seat_bidinfo[std::size_t(seat & 3)] = bi;
+            c.has_bidinfo = true;
+        })
+        .def("get_bidinfo", [](const Contract& c, int seat) {
+            return c.seat_bidinfo[std::size_t(seat & 3)];
+        })
         .def("__repr__", &Contract::toString);
 
     py::class_<AuctionModel>(m, "AuctionModel")
@@ -108,6 +117,14 @@ PYBIND11_MODULE(bridge_cpp, m) {
         .def("payoff", &BridgeGame::payoff)
         .def("team", &BridgeGame::team)
         .def("contract", &BridgeGame::contract)
+        .def("with_bidinfo", [](const BridgeGame& g, const std::array<std::array<float, 15>, 4>& bi) {
+            Contract c = g.contract();
+            c.seat_bidinfo = bi;
+            c.has_bidinfo = true;
+            BridgeGame out(g.initialHands(), c, g.payoffMode());
+            for (int i = 0; i < g.nPlies(); ++i) out.apply(int(g.history()[std::size_t(i)].card));
+            return out;
+        })
         .def("hand", &BridgeGame::hand)
         .def("initial_hand", &BridgeGame::initialHand)
         .def("hands", &BridgeGame::hands)
@@ -188,6 +205,19 @@ PYBIND11_MODULE(bridge_cpp, m) {
         return games;
     }, py::arg("path"), py::arg("require_contract") = false, py::arg("max_deals") = 0, py::arg("seed") = 1,
        py::arg("require_auction") = false);
+
+    m.def("load_ben_deal_pool", [](const std::string& path, int max_deals) {
+        return loadGlobalBenDealPool(path, max_deals);
+    }, py::arg("path"), py::arg("max_deals") = 0);
+
+    m.def("load_ben_deals", [](const std::string& path, int max_deals) {
+        BenDealPool pool;
+        if (!pool.load(path, max_deals)) throw std::runtime_error("load_ben_deals: failed to load " + path);
+        std::vector<BridgeGame> games;
+        games.reserve(pool.deals.size());
+        for (const auto& r : pool.deals) games.push_back(r.toGame(BridgeGame::PayoffMode::kDuplicateScore));
+        return games;
+    }, py::arg("path"), py::arg("max_deals") = 0);
 
     m.def("encode_auction_hand", [](Mask hand) {
         py::array_t<float> out(kAucHandDim);
@@ -280,7 +310,10 @@ PYBIND11_MODULE(bridge_cpp, m) {
           [](int num_deals, int worlds, int endgame_tricks, int root_exact_tricks,
              const std::string& fast_path, const std::string& belief_path, const std::string& q_path,
              double q_blend, double lik_weight, double eps, std::uint64_t seed, int threads,
-             int strain_filter, float reward_scale) {
+             int strain_filter, float reward_scale, bool use_deal_pool, int state_dim) {
+              if (state_dim != kBridgeStateDim && state_dim != kBridgeAucStateDim) {
+                  throw std::invalid_argument("collect_exit_dataset: state_dim must be 570 or 585");
+              }
               SearchOptions base_opt;
               base_opt.worlds = std::max(1, worlds);
               base_opt.endgame_tricks = endgame_tricks;
@@ -292,25 +325,26 @@ PYBIND11_MODULE(bridge_cpp, m) {
               base_opt.fast_lik_weight = lik_weight;
               if (!fast_path.empty()) {
                   auto fm = std::make_shared<cardbot::FastPolicyModel>();
-                  if (!fm->load(fast_path, "BRP1", -1, kBridgeStateDim, kBridgePolicyDim))
+                  if (!fm->load(fast_path, "BRP1", -1, 0, kBridgePolicyDim))
                       throw std::runtime_error("collect_exit_dataset: cannot load fast " + fast_path);
                   base_opt.fast_policy = fm;
               }
               if (!belief_path.empty()) {
                   auto bm = std::make_shared<cardbot::BeliefModel>();
-                  if (!bm->load(belief_path, kCards, 3, "BRB1", -1, kBridgeStateDim, kBridgePlyDim))
+                  if (!bm->load(belief_path, kCards, 3, "BRB1", -1, 0, kBridgePlyDim))
                       throw std::runtime_error("collect_exit_dataset: cannot load belief " + belief_path);
                   base_opt.belief_model = bm;
               }
               if (!q_path.empty()) {
                   auto qm = std::make_shared<cardbot::QGruModel>();
-                  if (!qm->load(q_path, "BRQ1", -1, kBridgeStateDim, kBridgePlyDim, kBridgeActionDim))
+                  if (!qm->load(q_path, "BRQ1", -1, 0, kBridgePlyDim, kBridgeActionDim))
                       throw std::runtime_error("collect_exit_dataset: cannot load q " + q_path);
                   base_opt.q_model = qm;
               }
+              auto deal_pool = use_deal_pool ? globalBenDealPool() : nullptr;
 
               struct Row {
-                  std::array<float, kBridgeStateDim> state{};
+                  std::array<float, kBridgeAucStateDim> state{};
                   std::vector<float> history;  // n_plies * kBridgePlyDim
                   std::int32_t n_plies = 0;
                   std::array<float, kBridgeMaxLegal * kBridgeActionDim> legal_actions{};
@@ -334,7 +368,10 @@ PYBIND11_MODULE(bridge_cpp, m) {
                       for (int d; (d = next_deal++) < num_deals;) {
                           const std::uint64_t ds = seed * 0x9E3779B97F4A7C15ull + std::uint64_t(d);
                           std::mt19937_64 rng(ds);
-                          BridgeGame g = randomBridgeGame(rng, BridgeGame::PayoffMode::kDuplicateScore, strain_filter);
+                          BridgeGame g = (deal_pool && !deal_pool->deals.empty())
+                                             ? deal_pool->deals[std::size_t(rng() % deal_pool->deals.size())].toGame(
+                                                   BridgeGame::PayoffMode::kDuplicateScore)
+                                             : randomBridgeGame(rng, BridgeGame::PayoffMode::kDuplicateScore, strain_filter);
                           const int strain = g.contract().strain;
                           while (!g.finished()) {
                               const auto legal = g.legalActions();
@@ -350,8 +387,9 @@ PYBIND11_MODULE(bridge_cpp, m) {
                               row.q_targets.fill(0.0f);
                               row.n_legal = int(legal.size());
                               row.history.resize(std::size_t(g.nPlies()) * kBridgePlyDim);
-                              row.n_plies = encodeBridgeState(g, seat, row.state.data(),
-                                                              row.history.empty() ? nullptr : row.history.data());
+                              row.n_plies = encodeBridgeStateForDim(
+                                  g, seat, state_dim, row.state.data(),
+                                  row.history.empty() ? nullptr : row.history.data());
                               for (std::size_t k = 0; k < legal.size(); ++k) {
                                   encodeBridgeAction(g, seat, legal[k], row.legal_actions.data() + k * kBridgeActionDim);
                                   row.legal_slots[k] = canonCard(legal[k], strain);
@@ -383,7 +421,7 @@ PYBIND11_MODULE(bridge_cpp, m) {
               py::ssize_t total = 0;
               for (const auto& v : per_thread) total += py::ssize_t(v.size());
 
-              py::array_t<float> state({total, py::ssize_t(kBridgeStateDim)});
+              py::array_t<float> state({total, py::ssize_t(state_dim)});
               py::array_t<float> history({total, py::ssize_t(kBridgeMaxPlies), py::ssize_t(kBridgePlyDim)});
               py::array_t<std::int32_t> n_plies(total);
               py::array_t<float> legal_actions({total, py::ssize_t(kBridgeMaxLegal), py::ssize_t(kBridgeActionDim)});
@@ -397,7 +435,7 @@ PYBIND11_MODULE(bridge_cpp, m) {
               py::ssize_t idx = 0;
               for (const auto& v : per_thread) {
                   for (const auto& r : v) {
-                      std::memcpy(state.mutable_data(idx, 0), r.state.data(), kBridgeStateDim * sizeof(float));
+                      std::memcpy(state.mutable_data(idx, 0), r.state.data(), std::size_t(state_dim) * sizeof(float));
                       if (!r.history.empty()) {
                           std::memcpy(history.mutable_data(idx, 0, 0), r.history.data(), r.history.size() * sizeof(float));
                       }
@@ -431,5 +469,6 @@ PYBIND11_MODULE(bridge_cpp, m) {
           py::arg("root_exact_tricks") = 6, py::arg("fast_path") = "", py::arg("belief_path") = "",
           py::arg("q_path") = "", py::arg("q_blend") = 0.0, py::arg("lik_weight") = 0.0,
           py::arg("eps") = 0.04, py::arg("seed") = 1, py::arg("threads") = 16,
-          py::arg("strain_filter") = -1, py::arg("reward_scale") = 500.0f);
+          py::arg("strain_filter") = -1, py::arg("reward_scale") = 500.0f,
+          py::arg("use_deal_pool") = false, py::arg("state_dim") = kBridgeStateDim);
 }

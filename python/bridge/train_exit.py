@@ -35,7 +35,9 @@ from bridge.suit_perm import SuitPermAugmenter
 
 def main():
     ap = argparse.ArgumentParser(description="Bridge Expert Iteration (ExIt) trainer")
-    ap.add_argument("--mode", choices=["all", "suit", "nt"], default="all")
+    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc"], default="all")
+    ap.add_argument("--ben-deals", type=str, default=None, help="BDP1 binary pool of BEN-bid deals for suit_auc")
+    ap.add_argument("--eval-ben-deals", type=str, default=None, help="BDP1 binary eval set for ben_nn_auc evals")
     ap.add_argument("--deals", type=int, default=2500, help="Total search-played deals to collect")
     ap.add_argument("--chunk-deals", type=int, default=500, help="Deals per C++ collection chunk")
     ap.add_argument("--worlds", type=int, default=16, help="Worlds per CRN search teacher call")
@@ -65,7 +67,14 @@ def main():
     ap.add_argument("--seed", type=int, default=101)
     args = ap.parse_args()
 
-    sf = {"all": -1, "suit": 0, "nt": 1}[args.mode]
+    sf = {"all": -1, "suit": 0, "nt": 1, "suit_auc": 0}[args.mode]
+    use_pool = (args.mode == "suit_auc") or bool(args.ben_deals)
+    state_dim = bridge_cpp.SuitAucBatchEnv.STATE_DIM if args.mode == "suit_auc" else bridge_cpp.BatchEnv.STATE_DIM
+    if args.ben_deals:
+        n_pool = bridge_cpp.load_ben_deal_pool(args.ben_deals)
+        if n_pool <= 0:
+            raise RuntimeError(f"Failed to load BEN deal pool {args.ben_deals}")
+        print(f"Loaded {n_pool:,} BEN-bid deals into C++ pool from {args.ben_deals}", flush=True)
     torch.manual_seed(args.seed)
 
     # 1. Collect search-labeled CRN dataset in C++ across all threads
@@ -90,6 +99,8 @@ def main():
             seed=args.seed + ci * 1000,
             threads=args.threads,
             strain_filter=sf,
+            use_deal_pool=use_pool,
+            state_dim=state_dim,
         )
         nrows = len(raw["n_legal"])
         total_rows += nrows
@@ -106,7 +117,7 @@ def main():
     print(f"Collected {total_rows:,} ExIt search-labeled states in {time.perf_counter() - t0:.1f}s", flush=True)
 
     # 2. Initialize / warm-start QGRU, BeliefNet, FastPolicy
-    state_dim = bridge_cpp.BatchEnv.STATE_DIM
+    from bridge.train_dmc import load_state_dict_expand
     ply_dim = bridge_cpp.BatchEnv.PLY_DIM
     action_dim = bridge_cpp.BatchEnv.ACTION_DIM
     policy_dim = bridge_cpp.BatchEnv.POLICY_DIM
@@ -116,14 +127,14 @@ def main():
     f_model = FastPolicy(state_dim, policy_dim, h1=args.fast_h1, h2=args.fast_h2)
 
     if args.resume_q:
-        q_model.load_state_dict(torch.load(args.resume_q, map_location="cpu", weights_only=True))
-        print(f"Warm-started QGRU from {args.resume_q}", flush=True)
+        load_state_dict_expand(q_model, args.resume_q)
+        print(f"Warm-started QGRU from {args.resume_q} (state_dim={state_dim})", flush=True)
     if args.resume_belief:
-        b_model.load_state_dict(torch.load(args.resume_belief, map_location="cpu", weights_only=True))
-        print(f"Warm-started BeliefNet from {args.resume_belief}", flush=True)
+        load_state_dict_expand(b_model, args.resume_belief)
+        print(f"Warm-started BeliefNet from {args.resume_belief} (state_dim={state_dim})", flush=True)
     if args.resume_fast:
-        f_model.load_state_dict(torch.load(args.resume_fast, map_location="cpu", weights_only=True))
-        print(f"Warm-started FastPolicy from {args.resume_fast}", flush=True)
+        load_state_dict_expand(f_model, args.resume_fast)
+        print(f"Warm-started FastPolicy from {args.resume_fast} (state_dim={state_dim})", flush=True)
 
     out_prefix = Path(args.out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +151,7 @@ def main():
         kl_temp=args.kl_temp,
         seed=args.seed,
     )
-    aug = SuitPermAugmenter(cfg.device)
+    aug = SuitPermAugmenter(cfg.device, state_dim=state_dim)
     cb_exit.train(
         dataset,
         q_model,
@@ -167,8 +178,9 @@ def main():
     ben_onnx = ROOT / "external" / "ben" / "models" / "onnx" / "decl_nt.onnx"
     if ben_onnx.exists():
         from arena import run_arena
-        run_arena(f"qgru:{q_bin}", "ben_nn", args.eval_pairs, 303, None, sf, False, args.threads)
-        run_arena(f"fast:{f_bin}", "ben_nn", args.eval_pairs, 303, None, sf, False, args.threads)
+        bspec = "ben_nn_auc" if args.eval_ben_deals else "ben_nn"
+        run_arena(f"qgru:{q_bin}", bspec, args.eval_pairs, 303, None, sf, False, args.threads, args.eval_ben_deals)
+        run_arena(f"fast:{f_bin}", bspec, args.eval_pairs, 303, None, sf, False, args.threads, args.eval_ben_deals)
 
 
 if __name__ == "__main__":

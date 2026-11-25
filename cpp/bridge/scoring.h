@@ -106,6 +106,9 @@ struct Contract {
     bool vul_ns = false;
     bool vul_ew = false;
     Auction auction{};
+    // Optional per-seat auction info (e.g. BEN bidinfo.onnx: [hcp_lho, hcp_par, hcp_rho, shp_lho(SHDC), shp_par(SHDC), shp_rho(SHDC)])
+    std::array<std::array<float, 15>, 4> seat_bidinfo{};
+    bool has_bidinfo = false;
 
     constexpr int target() const { return 6 + level; }
     constexpr int dummy() const { return partnerOf(declarer); }
