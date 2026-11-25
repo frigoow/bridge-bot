@@ -5,6 +5,7 @@
 //    (used both by training scripts and the cross-engine arena against BEN!)
 
 #include "bridge/agents.h"
+#include "bridge/auction_model.h"
 #include "bridge/card.h"
 #include "bridge/dds_solver.h"
 #include "bridge/deal.h"
@@ -57,7 +58,40 @@ PYBIND11_MODULE(bridge_cpp, m) {
         .def("opening_leader", &Contract::openingLeader)
         .def("declarer_team", &Contract::declarerTeam)
         .def("declarer_vul", &Contract::declarerVul)
+        .def("has_auction", &Contract::hasAuction)
+        .def_property_readonly("auction_dealer", [](const Contract& c) { return int(c.auction.dealer); })
+        .def_property_readonly("auction_calls", [](const Contract& c) {
+            std::vector<int> out;
+            out.reserve(c.auction.n_calls);
+            for (int i = 0; i < int(c.auction.n_calls); ++i) out.push_back(int(c.auction.calls[std::size_t(i)]));
+            return out;
+        })
+        .def("set_auction", [](Contract& c, int dealer, const std::vector<int>& calls) {
+            c.auction.dealer = std::uint8_t(dealer & 3);
+            c.auction.n_calls = std::uint8_t(std::min<std::size_t>(calls.size(), kMaxAuctionCalls));
+            for (int i = 0; i < int(c.auction.n_calls); ++i) c.auction.calls[std::size_t(i)] = std::uint8_t(calls[std::size_t(i)]);
+        })
+        .def("legal_call_mask", [](const Contract& c, int idx) { return c.auction.legalMaskAt(idx); })
         .def("__repr__", &Contract::toString);
+
+    py::class_<AuctionModel>(m, "AuctionModel")
+        .def(py::init<>())
+        .def("load", [](AuctionModel& am, const std::string& path) { return am.load(path, "BRA1"); })
+        .def("loaded", &AuctionModel::loaded)
+        .def("eval_game", [](const AuctionModel& am, const BridgeGame& g, const std::vector<int>& hidden_seats,
+                             double temp, double card_temp) {
+            AuctionCache cache;
+            am.precompute(g.contract(), cache, card_temp);
+            std::array<int, 3> hs{0, 0, 0};
+            const int nh = std::min<int>(3, int(hidden_seats.size()));
+            for (int k = 0; k < nh; ++k) hs[std::size_t(k)] = hidden_seats[std::size_t(k)];
+            const double ll = am.logLikelihood(g.initialHands(), hs, nh, cache, temp);
+            py::array_t<double> cp({py::ssize_t(kCards), py::ssize_t(4)});
+            auto r = cp.mutable_unchecked<2>();
+            for (int c = 0; c < kCards; ++c)
+                for (int s = 0; s < 4; ++s) r(c, s) = cache.card_probs[std::size_t(c)][std::size_t(s)];
+            return py::make_tuple(ll, cp);
+        }, py::arg("game"), py::arg("hidden_seats"), py::arg("temp") = 1.0, py::arg("card_temp") = 1.0);
 
     py::class_<BridgeGame>(m, "BridgeGame")
         .def(py::init([](const std::array<Mask, 4>& hands, const Contract& c) {
@@ -122,8 +156,9 @@ PYBIND11_MODULE(bridge_cpp, m) {
         return randomBridgeGameFromSeed(seed, BridgeGame::PayoffMode::kDuplicateScore, strain_filter);
     }, py::arg("seed") = 1, py::arg("strain_filter") = -1);
 
-    m.def("load_pbn", [](const std::string& path, bool require_contract, int max_deals, std::uint64_t seed) {
-        const auto pbn = loadPbnFile(path, require_contract, max_deals);
+    m.def("load_pbn", [](const std::string& path, bool require_contract, int max_deals, std::uint64_t seed,
+                         bool require_auction) {
+        const auto pbn = loadPbnFile(path, require_contract, max_deals, require_auction);
         std::vector<BridgeGame> games;
         games.reserve(pbn.size());
         for (std::size_t i = 0; i < pbn.size(); ++i) {
@@ -135,7 +170,23 @@ PYBIND11_MODULE(bridge_cpp, m) {
             games.emplace_back(pbn[i].hands, c, BridgeGame::PayoffMode::kDuplicateScore);
         }
         return games;
-    }, py::arg("path"), py::arg("require_contract") = false, py::arg("max_deals") = 0, py::arg("seed") = 1);
+    }, py::arg("path"), py::arg("require_contract") = false, py::arg("max_deals") = 0, py::arg("seed") = 1,
+       py::arg("require_auction") = false);
+
+    m.def("encode_auction_hand", [](Mask hand) {
+        py::array_t<float> out(kAucHandDim);
+        encodeAuctionHand(hand, out.mutable_data());
+        return out;
+    });
+
+    m.def("encode_auction_steps", [](const Contract& c) {
+        const int n = int(c.auction.n_calls);
+        py::array_t<float> out({py::ssize_t(n + 1), py::ssize_t(kAucStepDim)});
+        for (int t = 0; t <= n; ++t) {
+            encodeAuctionStep(c, t, out.mutable_data() + std::size_t(t) * std::size_t(kAucStepDim));
+        }
+        return out;
+    });
 
     m.def("contract_score", [](int level, int strain, int doubled, bool vul, int decl_tricks) {
         return contractScore(level, strain, doubled, vul, decl_tricks);

@@ -3,10 +3,100 @@
 
 #include "bridge/card.h"
 
+#include <array>
+#include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 
 namespace bridge {
+
+constexpr int kCallPass = 0;
+constexpr int kCallDouble = 1;
+constexpr int kCallRedouble = 2;
+constexpr int kAuctionCalls = 38;     // 0=Pass, 1=X, 2=XX, 3..37 = (level-1)*5 + strain + 3
+constexpr int kMaxAuctionCalls = 64;
+
+constexpr int makeBidCall(int level, int strain) { return 3 + (level - 1) * 5 + strain; }
+constexpr bool isBidCall(int c) { return c >= 3 && c < kAuctionCalls; }
+constexpr int bidLevel(int c) { return 1 + (c - 3) / 5; }
+constexpr int bidStrain(int c) { return (c - 3) % 5; }
+
+inline int parseAuctionCall(const std::string& tok) {
+    if (tok.empty()) return -1;
+    std::string u;
+    u.reserve(tok.size());
+    for (char ch : tok) {
+        if (ch == '!' || ch == '?' || ch == '*') continue;
+        u.push_back(char(std::toupper(static_cast<unsigned char>(ch))));
+    }
+    if (u.empty()) return -1;
+    if (u == "PASS" || u == "P" || u == "-") return kCallPass;
+    if (u == "X" || u == "DBL" || u == "DOUBLE") return kCallDouble;
+    if (u == "XX" || u == "RDBL" || u == "REDOUBLE") return kCallRedouble;
+    if (u[0] >= '1' && u[0] <= '7' && u.size() >= 2) {
+        const int lvl = u[0] - '0';
+        int st = -1;
+        if (u[1] == 'C') st = kClubs;
+        else if (u[1] == 'D') st = kDiamonds;
+        else if (u[1] == 'H') st = kHearts;
+        else if (u[1] == 'S') st = kSpades;
+        else if (u[1] == 'N') st = kNT;
+        if (st >= 0) return makeBidCall(lvl, st);
+    }
+    return -1;
+}
+
+inline std::string auctionCallToString(int c) {
+    if (c == kCallPass) return "Pass";
+    if (c == kCallDouble) return "X";
+    if (c == kCallRedouble) return "XX";
+    if (isBidCall(c)) {
+        std::string s = std::to_string(bidLevel(c));
+        const int st = bidStrain(c);
+        if (st == kNT) s += "NT";
+        else s.push_back(suitChar(st));
+        return s;
+    }
+    return "?";
+}
+
+struct Auction {
+    std::uint8_t dealer = 0;  // 0=N, 1=E, 2=S, 3=W
+    std::uint8_t n_calls = 0;
+    std::array<std::uint8_t, kMaxAuctionCalls> calls{};
+
+    constexpr bool empty() const { return n_calls == 0; }
+    constexpr int seatOf(int idx) const { return (int(dealer) + idx) & 3; }
+
+    /** Bitmask of legal calls (bits 0..37) at call index `idx` (0..n_calls). */
+    std::uint64_t legalMaskAt(int idx) const {
+        int last_bid = 2;
+        int last_bidder = -1;
+        int doubled = 0;
+        const int lim = idx < int(n_calls) ? idx : int(n_calls);
+        for (int i = 0; i < lim; ++i) {
+            const int c = int(calls[std::size_t(i)]);
+            if (isBidCall(c)) {
+                last_bid = c;
+                last_bidder = seatOf(i);
+                doubled = 0;
+            } else if (c == kCallDouble) {
+                doubled = 1;
+            } else if (c == kCallRedouble) {
+                doubled = 2;
+            }
+        }
+        const int cur_seat = seatOf(idx);
+        std::uint64_t mask = 1ull << kCallPass;
+        if (last_bidder >= 0) {
+            if (doubled == 0 && teamOf(last_bidder) != teamOf(cur_seat)) mask |= (1ull << kCallDouble);
+            if (doubled == 1 && teamOf(last_bidder) == teamOf(cur_seat)) mask |= (1ull << kCallRedouble);
+        }
+        for (int b = last_bid + 1; b < kAuctionCalls; ++b) mask |= (1ull << b);
+        return mask;
+    }
+};
 
 struct Contract {
     int level = 1;       // 1..7 (target = 6 + level tricks)
@@ -15,12 +105,14 @@ struct Contract {
     int doubled = 0;     // 0=undoubled, 1=doubled (X), 2=redoubled (XX)
     bool vul_ns = false;
     bool vul_ew = false;
+    Auction auction{};
 
     constexpr int target() const { return 6 + level; }
     constexpr int dummy() const { return partnerOf(declarer); }
     constexpr int openingLeader() const { return lhoOf(declarer); }
     constexpr int declarerTeam() const { return teamOf(declarer); }
     constexpr bool declarerVul() const { return declarerTeam() == 0 ? vul_ns : vul_ew; }
+    constexpr bool hasAuction() const { return !auction.empty(); }
 
     std::string toString() const {
         std::string s = std::to_string(level);

@@ -57,6 +57,14 @@ std::shared_ptr<const cardbot::BeliefModel> loadBelief(const std::string& path) 
     return m;
 }
 
+std::shared_ptr<const AuctionModel> loadAuction(const std::string& path) {
+    auto m = std::make_shared<AuctionModel>();
+    if (!m->load(path, "BRA1")) {
+        throw std::runtime_error("bridge::makeAgent: failed to load AuctionModel " + path);
+    }
+    return m;
+}
+
 }  // namespace
 
 cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
@@ -172,6 +180,16 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
                 o.fast_lik_weight = std::stod(p.substr(4));
             } else if (p.rfind("likt=", 0) == 0) {
                 o.fast_lik_temp = std::stod(p.substr(5));
+            } else if (p.rfind("auc=", 0) == 0) {
+                o.auction_model = loadAuction(p.substr(4));
+            } else if (p.rfind("auclik=", 0) == 0) {
+                o.auc_lik_weight = std::stod(p.substr(7));
+            } else if (p.rfind("auclikt=", 0) == 0) {
+                o.auc_lik_temp = std::stod(p.substr(8));
+            } else if (p.rfind("aucprior=", 0) == 0) {
+                o.auc_prior_weight = std::stod(p.substr(9));
+            } else if (p.rfind("auct=", 0) == 0) {
+                o.auc_card_temp = std::stod(p.substr(5));
             } else if (p.rfind("z=", 0) == 0) {
                 o.z = std::stod(p.substr(2));
             } else if (p == "norace") {

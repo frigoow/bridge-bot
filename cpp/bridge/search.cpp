@@ -88,6 +88,10 @@ struct BridgeWorldSource {
     const cardbot::FastPolicyModel* lik_policy = nullptr;
     double lik_weight = 0.0;
     double lik_temp = 1.0;
+    const AuctionModel* auc_model = nullptr;
+    const AuctionCache* auc_cache = nullptr;
+    double auc_lik_weight = 0.0;
+    double auc_lik_temp = 1.0;
 
     double count() const { return sampler.count(); }
 
@@ -108,53 +112,67 @@ struct BridgeWorldSource {
         return sampler.sample(rng);
     }
 
-    bool weighted() const { return lik_policy != nullptr && lik_weight > 0.0 && root.nPlies() > 0; }
+    bool playWeighted() const { return lik_policy != nullptr && lik_weight > 0.0 && root.nPlies() > 0; }
+    bool aucWeighted() const {
+        return auc_model != nullptr && auc_cache != nullptr && auc_lik_weight > 0.0 && auc_cache->n_calls > 0;
+    }
+    bool weighted() const { return playWeighted() || aucWeighted(); }
 
-    /** Log-likelihood of hidden seats' past non-forced plays under `lik_policy` in this world. */
+    /** Log-likelihood of hidden seats' past bids + non-forced plays in this world. */
     double logWeight(const std::array<Mask, 4>& hands) const {
         if (!weighted()) return 0.0;
         const BridgeGame wg = root.withRemainingHands(hands);
-        BridgeGame sim(wg.initialHands(), root.contract(), root.payoffMode());
-        const auto& hist = root.history();
-        const int n_plies = root.nPlies();
-        const int strain = root.contract().strain;
         const auto& hseats = sampler.hiddenSeats();
         const int nh = sampler.numHiddenSeats();
-        auto is_hidden = [&](int s) {
-            for (int k = 0; k < nh; ++k) if (hseats[std::size_t(k)] == s) return true;
-            return false;
-        };
+        double total_lw = 0.0;
 
-        thread_local std::vector<float> state(kBridgeStateDim), logits;
-        logits.resize(std::size_t(lik_policy->outDim()));
-        const double inv_t = 1.0 / std::max(lik_temp, 0.05);
-        double ll = 0.0;
-
-        for (int p = 0; p < n_plies; ++p) {
-            const int seat = int(hist[std::size_t(p)].seat);
-            const int played = int(hist[std::size_t(p)].card);
-            if (is_hidden(seat)) {
-                const Mask lm = sim.legalMask();
-                if (lm & (lm - 1)) {
-                    encodeBridgeState(sim, seat, state.data(), nullptr);
-                    lik_policy->forward(state.data(), logits.data());
-                    double mx = -1e30;
-                    for (Mask m = lm; m; m &= m - 1) {
-                        const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
-                        if (v > mx) mx = v;
-                    }
-                    double sum_e = 0.0;
-                    for (Mask m = lm; m; m &= m - 1) {
-                        const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
-                        sum_e += std::exp(v - mx);
-                    }
-                    const double vp = double(logits[std::size_t(canonCard(played, strain))]) * inv_t;
-                    ll += (vp - mx - std::log(std::max(sum_e, 1e-12)));
-                }
-            }
-            sim.apply(played);
+        if (aucWeighted()) {
+            total_lw += auc_lik_weight *
+                        auc_model->logLikelihood(wg.initialHands(), hseats, nh, *auc_cache, auc_lik_temp);
         }
-        return lik_weight * ll;
+
+        if (playWeighted()) {
+            BridgeGame sim(wg.initialHands(), root.contract(), root.payoffMode());
+            const auto& hist = root.history();
+            const int n_plies = root.nPlies();
+            const int strain = root.contract().strain;
+            auto is_hidden = [&](int s) {
+                for (int k = 0; k < nh; ++k) if (hseats[std::size_t(k)] == s) return true;
+                return false;
+            };
+
+            thread_local std::vector<float> state(kBridgeStateDim), logits;
+            logits.resize(std::size_t(lik_policy->outDim()));
+            const double inv_t = 1.0 / std::max(lik_temp, 0.05);
+            double ll = 0.0;
+
+            for (int p = 0; p < n_plies; ++p) {
+                const int seat = int(hist[std::size_t(p)].seat);
+                const int played = int(hist[std::size_t(p)].card);
+                if (is_hidden(seat)) {
+                    const Mask lm = sim.legalMask();
+                    if (lm & (lm - 1)) {
+                        encodeBridgeState(sim, seat, state.data(), nullptr);
+                        lik_policy->forward(state.data(), logits.data());
+                        double mx = -1e30;
+                        for (Mask m = lm; m; m &= m - 1) {
+                            const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                            if (v > mx) mx = v;
+                        }
+                        double sum_e = 0.0;
+                        for (Mask m = lm; m; m &= m - 1) {
+                            const double v = double(logits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                            sum_e += std::exp(v - mx);
+                        }
+                        const double vp = double(logits[std::size_t(canonCard(played, strain))]) * inv_t;
+                        ll += (vp - mx - std::log(std::max(sum_e, 1e-12)));
+                    }
+                }
+                sim.apply(played);
+            }
+            total_lw += lik_weight * ll;
+        }
+        return total_lw;
     }
 
     bool hasPrior() const { return use_belief; }
@@ -240,15 +258,28 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     }
     out.prior_card = prior;
 
-    // Build sampler + optional BeliefModel weights + optional FastPolicy play-likelihood
+    // Build sampler + optional BeliefModel + optional AuctionModel prior & likelihood + FastPolicy play-likelihood
     const Observation obs = g.observe(seat);
     const BridgeSampler sampler(obs);
-    BridgeWorldSource src{g, sampler, false, {}, fast, opt.fast_lik_weight, opt.fast_lik_temp};
+    const AuctionModel* auc = (opt.auction_model && opt.auction_model->loaded() && g.contract().hasAuction())
+                                  ? opt.auction_model.get()
+                                  : nullptr;
+    AuctionCache auc_cache;
+    if (auc && (opt.auc_lik_weight > 0.0 || opt.auc_prior_weight > 0.0)) {
+        auc->precompute(g.contract(), auc_cache, opt.auc_card_temp);
+    }
+
+    BridgeWorldSource src{g, sampler, false, {}, fast, opt.fast_lik_weight, opt.fast_lik_temp,
+                          auc, auc ? &auc_cache : nullptr, opt.auc_lik_weight, opt.auc_lik_temp};
+    const bool need_m_raw = (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) ||
+                            (auc && opt.auc_prior_weight > 0.0);
+    std::array<std::array<double, 3>, kCards> m_raw{};
+    if (need_m_raw) m_raw = sampler.cardMarginals();
+
     if (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) {
         std::vector<float> state(kBridgeStateDim);
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
         const int np = encodeBridgeState(g, seat, state.data(), hist.data());
-        const auto m_raw = sampler.cardMarginals();
         std::vector<float> marg_in(kCards * 3, 0.0f);
         for (int c = 0; c < kCards; ++c) {
             const int cc = canonCard(c, strain);
@@ -259,6 +290,31 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
         for (int c = 0; c < kCards; ++c) {
             const int cc = canonCard(c, strain);
             for (int k = 0; k < 3; ++k) src.belief_weights[std::size_t(c)][std::size_t(k)] = double(probs[std::size_t(cc * 3 + k)]);
+        }
+        src.use_belief = true;
+    }
+
+    if (auc && opt.auc_prior_weight > 0.0) {
+        const auto& hseats = sampler.hiddenSeats();
+        const int nh = sampler.numHiddenSeats();
+        for (int c = 0; c < kCards; ++c) {
+            double sum = 0.0;
+            for (int k = 0; k < nh; ++k) {
+                const double base = src.use_belief ? src.belief_weights[std::size_t(c)][std::size_t(k)]
+                                                   : m_raw[std::size_t(c)][std::size_t(k)];
+                const int abs_s = hseats[std::size_t(k)];
+                const double ap = std::pow(std::max(auc_cache.card_probs[std::size_t(c)][std::size_t(abs_s)], 1e-4),
+                                           opt.auc_prior_weight);
+                const double w = (m_raw[std::size_t(c)][std::size_t(k)] > 0.0) ? (base * ap) : 0.0;
+                src.belief_weights[std::size_t(c)][std::size_t(k)] = w;
+                sum += w;
+            }
+            for (int k = nh; k < 3; ++k) src.belief_weights[std::size_t(c)][std::size_t(k)] = 0.0;
+            if (sum > 1e-12) {
+                for (int k = 0; k < nh; ++k) src.belief_weights[std::size_t(c)][std::size_t(k)] /= sum;
+            } else {
+                for (int k = 0; k < nh; ++k) src.belief_weights[std::size_t(c)][std::size_t(k)] = m_raw[std::size_t(c)][std::size_t(k)];
+            }
         }
         src.use_belief = true;
     }

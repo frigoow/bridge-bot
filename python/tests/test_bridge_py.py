@@ -172,3 +172,82 @@ def test_collect_exit_dataset_and_train():
     cfg = cb_exit.ExitConfig(epochs=2, batch_size=32, log=None, device="cpu")
     m = cb_exit.train(ds, q, cfg, belief_model=b, fast_model=f, augment=aug.permute_dmc_batch)
     assert m["q_mse"] >= 0.0 and m["belief_ce"] > 0.0 and m["fast_ce"] > 0.0
+
+
+def test_auction_pbn_and_cpp_parity(tmp_path):
+    from bridge.auction_model import AuctionNet
+
+    # Write a synthetic PBN with alert markers, AP, and derived contract check
+    pbn_file = tmp_path / "sample.pbn"
+    pbn_file.write_text(
+        '[Board "1"]\n'
+        '[Dealer "N"]\n'
+        '[Vulnerable "NS"]\n'
+        '[Deal "N:AKQ2.KQ3.876.543 987.JT98.AKQ.A92 JT65.A765.543.K8 43.42.JT92.QJT76"]\n'
+        '[Declarer "N"]\n'
+        '[Contract "4S"]\n'
+        '[Auction "N"]\n'
+        '1S =1= Pass 2S Pass\n'
+        '4S AP\n'
+    )
+    games = bridge_cpp.load_pbn(str(pbn_file), require_contract=True, require_auction=True)
+    assert len(games) == 1
+    g = games[0]
+    c = g.contract()
+    assert c.has_auction()
+    assert c.auction_dealer == 0
+    # 1S=6, Pass=0, 2S=11, Pass=0, 4S=21, Pass, Pass, Pass
+    assert c.auction_calls == [6, 0, 11, 0, 21, 0, 0, 0]
+
+    # Export AuctionNet -> BRA1 and check bit-exact parity with C++ AuctionModel
+    torch.manual_seed(13)
+    net = AuctionNet(gru_hidden=48, hand_hidden=32, head_hidden=48).eval()
+    apath = tmp_path / "auc.bin"
+    net.export_bin(apath)
+
+    acpp = bridge_cpp.AuctionModel()
+    assert acpp.load(str(apath))
+
+    steps = torch.as_tensor(bridge_cpp.encode_auction_steps(c)).unsqueeze(0)  # [1, T+1, 45]
+    n_calls = torch.tensor([len(c.auction_calls)], dtype=torch.long)
+    dealer = c.auction_dealer
+    init_hands = g.initial_hands()
+    hfeats = np.stack([bridge_cpp.encode_auction_hand(init_hands[(dealer + r) & 3]) for r in range(4)], axis=0)
+    hfeats_t = torch.as_tensor(hfeats).unsqueeze(0)  # [1, 4, 62]
+
+    with torch.no_grad():
+        bid_logits, card_logits = net(steps, n_calls, hfeats_t)
+        card_probs_rel = torch.softmax(card_logits[0], dim=-1).numpy()  # [52, 4] rel dealer
+
+    # Reorder card_probs_rel to absolute seat 0..3
+    card_probs_abs = np.zeros_like(card_probs_rel)
+    for r in range(4):
+        card_probs_abs[:, (dealer + r) & 3] = card_probs_rel[:, r]
+
+    hidden_seats = [1, 3]  # E and W
+    # Compute PyTorch masked log-likelihood for hidden_seats
+    py_ll = 0.0
+    for t, actual in enumerate(c.auction_calls):
+        seat = (dealer + t) & 3
+        if seat not in hidden_seats:
+            continue
+        lmask = c.legal_call_mask(t)
+        logits_t = bid_logits[0, t].numpy()
+        legal_idx = [b for b in range(38) if (lmask >> b) & 1]
+        assert len(legal_idx) > 1
+        vals = logits_t[legal_idx]
+        mx = vals.max()
+        lse = mx + np.log(np.exp(vals - mx).sum())
+        py_ll += float(logits_t[actual] - lse)
+
+    cpp_ll, cpp_cp = acpp.eval_game(g, hidden_seats)
+    np.testing.assert_allclose(cpp_ll, py_ll, atol=1e-4)
+    np.testing.assert_allclose(cpp_cp, card_probs_abs, atol=1e-4)
+
+    # Also verify C++ searchAgent runs cleanly with auc= + auclik= + aucprior= at ply 0 and ply 4!
+    agent = bridge_cpp.Agent(f"search:8:dds4:rex4:auc={apath}:auclik=0.5:aucprior=0.5", 42)
+    for _ in range(5):
+        mv = agent.act(g)
+        assert mv in g.legal_actions()
+        g.apply(mv)
+

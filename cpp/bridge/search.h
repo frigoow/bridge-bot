@@ -7,6 +7,7 @@
 //  - Root-exact DDS solving in the late game (tricksRemaining <= root_exact_tricks)
 //  - Optional QGruModel value blend with late-game taper and paired overrule test
 
+#include "bridge/auction_model.h"
 #include "bridge/card.h"
 #include "bridge/deal.h"
 #include "cardbot/game.h"
@@ -39,6 +40,11 @@ struct SearchOptions {
     double belief_temp = 1.0;
     double fast_lik_weight = 0.0; // > 0: weight worlds by FastPolicy log-likelihood of hidden seats' past plays
     double fast_lik_temp = 1.0;
+    double auc_lik_weight = 0.0;  // > 0: weight worlds by AuctionModel Bayesian bid log-likelihood
+    double auc_lik_temp = 1.0;
+    double auc_prior_weight = 0.0; // > 0: blend AuctionModel card-location prior into proposal sampling
+    double auc_card_temp = 1.0;
+    std::shared_ptr<const AuctionModel> auction_model;
     std::shared_ptr<const cardbot::FastPolicyModel> fast_policy;
     std::shared_ptr<const cardbot::QGruModel> q_model;
     std::shared_ptr<const cardbot::BeliefModel> belief_model;

@@ -225,9 +225,42 @@ inline bool parsePbnContract(const std::string& val, Contract& c) {
     return true;
 }
 
-/** Loads deals from a PBN file. Keeps deals with valid 52-card hands (and optional contract). */
+inline bool deriveContractFromAuction(const Auction& a, Contract& c) {
+    int last_bid = -1;
+    int last_bidder = -1;
+    int doubled = 0;
+    for (int i = 0; i < int(a.n_calls); ++i) {
+        const int call = int(a.calls[std::size_t(i)]);
+        if (isBidCall(call)) {
+            last_bid = call;
+            last_bidder = a.seatOf(i);
+            doubled = 0;
+        } else if (call == kCallDouble) {
+            doubled = 1;
+        } else if (call == kCallRedouble) {
+            doubled = 2;
+        }
+    }
+    if (last_bid < 0) return false;
+    c.level = bidLevel(last_bid);
+    c.strain = bidStrain(last_bid);
+    c.doubled = doubled;
+    const int win_team = teamOf(last_bidder);
+    // Declarer is the FIRST player on the winning team to bid the final strain
+    c.declarer = last_bidder;
+    for (int i = 0; i < int(a.n_calls); ++i) {
+        const int call = int(a.calls[std::size_t(i)]);
+        if (isBidCall(call) && bidStrain(call) == c.strain && teamOf(a.seatOf(i)) == win_team) {
+            c.declarer = a.seatOf(i);
+            break;
+        }
+    }
+    return true;
+}
+
+/** Loads deals from a PBN file. Keeps deals with valid 52-card hands (and optional contract/auction). */
 inline std::vector<PbnDeal> loadPbnFile(const std::string& path, bool require_contract = false,
-                                        int max_deals = 0) {
+                                        int max_deals = 0, bool require_auction = false) {
     std::ifstream in(path);
     std::vector<PbnDeal> out;
     if (!in) return out;
@@ -235,54 +268,121 @@ inline std::vector<PbnDeal> loadPbnFile(const std::string& path, bool require_co
     bool has_deal = false;
     bool has_decl = false;
     bool has_con = false;
+    bool in_auction = false;
     auto flush = [&]() {
         if (has_deal) {
+            if ((!has_con || !has_decl) && !cur.contract.auction.empty()) {
+                Contract derived = cur.contract;
+                if (deriveContractFromAuction(cur.contract.auction, derived)) {
+                    if (!has_con) {
+                        cur.contract.level = derived.level;
+                        cur.contract.strain = derived.strain;
+                        cur.contract.doubled = derived.doubled;
+                        has_con = true;
+                    }
+                    if (!has_decl) {
+                        cur.contract.declarer = derived.declarer;
+                        has_decl = true;
+                    }
+                }
+            }
             cur.has_contract = has_con && has_decl;
-            if (!require_contract || cur.has_contract) {
+            if ((!require_contract || cur.has_contract) && (!require_auction || cur.contract.hasAuction())) {
                 out.push_back(cur);
             }
         }
         cur = PbnDeal{};
-        has_deal = has_decl = has_con = false;
+        has_deal = has_decl = has_con = in_auction = false;
     };
 
     std::string line;
     while (std::getline(in, line)) {
-        // Trim whitespace
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ')) line.pop_back();
+        // Trim trailing CR/LF/spaces
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t'))
+            line.pop_back();
+        // Strip leading spaces
+        std::size_t lpos = 0;
+        while (lpos < line.size() && (line[lpos] == ' ' || line[lpos] == '\t')) ++lpos;
+        if (lpos > 0) line = line.substr(lpos);
+
         if (line.empty()) {
             flush();
             if (max_deals > 0 && int(out.size()) >= max_deals) break;
             continue;
         }
-        if (line[0] != '[') continue;
-        const auto sp = line.find(' ');
-        const auto q1 = line.find('"');
-        const auto q2 = line.rfind('"');
-        if (sp == std::string::npos || q1 == std::string::npos || q2 == q1) continue;
-        const std::string tag = line.substr(1, sp - 1);
-        const std::string val = line.substr(q1 + 1, q2 - q1 - 1);
-        if (tag == "Board") {
-            if (has_deal) {
-                flush();
-                if (max_deals > 0 && int(out.size()) >= max_deals) break;
+        if (line[0] == '%' || line[0] == ';') continue;
+
+        if (line[0] == '[') {
+            in_auction = false;
+            const auto sp = line.find(' ');
+            const auto q1 = line.find('"');
+            const auto q2 = line.rfind('"');
+            if (sp == std::string::npos || q1 == std::string::npos || q2 == q1) continue;
+            const std::string tag = line.substr(1, sp - 1);
+            const std::string val = line.substr(q1 + 1, q2 - q1 - 1);
+            if (tag == "Board") {
+                if (has_deal) {
+                    flush();
+                    if (max_deals > 0 && int(out.size()) >= max_deals) break;
+                }
+                cur.board_id = val;
+            } else if (tag == "Deal") {
+                has_deal = parsePbnDealString(val, cur.hands);
+            } else if (tag == "Dealer") {
+                if (!val.empty()) {
+                    const int dl = parseSeat(val[0]);
+                    if (dl >= 0) cur.contract.auction.dealer = std::uint8_t(dl);
+                }
+            } else if (tag == "Vulnerable") {
+                cur.contract.vul_ns = (val == "NS" || val == "All" || val == "Both");
+                cur.contract.vul_ew = (val == "EW" || val == "All" || val == "Both");
+            } else if (tag == "Declarer") {
+                if (!val.empty()) {
+                    const int d = parseSeat(val[0]);
+                    if (d >= 0) {
+                        cur.contract.declarer = d;
+                        has_decl = true;
+                    }
+                }
+            } else if (tag == "Contract") {
+                has_con = parsePbnContract(val, cur.contract);
+            } else if (tag == "Auction") {
+                if (!val.empty()) {
+                    const int dl = parseSeat(val[0]);
+                    if (dl >= 0) cur.contract.auction.dealer = std::uint8_t(dl);
+                }
+                cur.contract.auction.n_calls = 0;
+                in_auction = true;
             }
-            cur.board_id = val;
-        } else if (tag == "Deal") {
-            has_deal = parsePbnDealString(val, cur.hands);
-        } else if (tag == "Vulnerable") {
-            cur.contract.vul_ns = (val == "NS" || val == "All" || val == "Both");
-            cur.contract.vul_ew = (val == "EW" || val == "All" || val == "Both");
-        } else if (tag == "Declarer") {
-            if (!val.empty()) {
-                const int d = parseSeat(val[0]);
-                if (d >= 0) {
-                    cur.contract.declarer = d;
-                    has_decl = true;
+            continue;
+        }
+
+        if (in_auction) {
+            // Strip inline {comments}
+            std::string cleaned;
+            bool in_brace = false;
+            for (char ch : line) {
+                if (ch == '{') { in_brace = true; continue; }
+                if (ch == '}') { in_brace = false; continue; }
+                if (!in_brace) cleaned.push_back(ch);
+            }
+            std::istringstream iss(cleaned);
+            std::string tok;
+            while (iss >> tok) {
+                if (tok == "*" || tok[0] == ';') break;
+                if (tok.size() >= 2 && tok.front() == '=' && tok.back() == '=') continue;  // alert =1=
+                if (tok == "AP" || tok == "ap") {
+                    for (int k = 0; k < 3 && cur.contract.auction.n_calls < kMaxAuctionCalls; ++k) {
+                        cur.contract.auction.calls[cur.contract.auction.n_calls++] = kCallPass;
+                    }
+                    in_auction = false;
+                    break;
+                }
+                const int c = parseAuctionCall(tok);
+                if (c >= 0 && cur.contract.auction.n_calls < kMaxAuctionCalls) {
+                    cur.contract.auction.calls[cur.contract.auction.n_calls++] = std::uint8_t(c);
                 }
             }
-        } else if (tag == "Contract") {
-            has_con = parsePbnContract(val, cur.contract);
         }
     }
     if (max_deals <= 0 || int(out.size()) < max_deals) flush();
