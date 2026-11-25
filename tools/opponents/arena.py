@@ -41,6 +41,23 @@ def make_player_factory(spec: str):
 
         return factory
 
+    if spec == "ben_dds_auc" or spec.startswith("ben_dds_auc:"):
+        parts = spec.split(":")
+        w = int(parts[1]) if len(parts) >= 2 else 16
+        pool = int(parts[2]) if len(parts) >= 3 else 6
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben"):
+                local.ben = BenDdsPlayer(bridge_cpp, worlds=w, seed=seed, use_auction=True, auc_pool=pool)
+            else:
+                local.ben.seed = seed
+                local.ben._step = 0
+            ben = local.ben
+            return lambda g: ben.act(g)
+
+        return factory
+
     if spec == "ben_dds" or spec.startswith("ben_dds:"):
         w = int(spec.split(":", 1)[1]) if ":" in spec else 16
         local = threading.local()

@@ -66,6 +66,8 @@ class BenOnnxPlayer:
 
         self.lead_nt = load("lead_nt.onnx")
         self.lead_suit = load("lead_suit.onnx")
+        self.bidder = load("bidder.onnx") if (onnx_dir / "bidder.onnx").exists() else None
+        self.bidinfo = load("bidinfo.onnx") if (onnx_dir / "bidinfo.onnx").exists() else None
         # Indexed by player_i in BEN numbering: 0=lefty, 1=dummy, 2=righty, 3=decl
         self.nt_models = [
             load("lefty_nt.onnx"),
@@ -80,7 +82,66 @@ class BenOnnxPlayer:
             load("decl_suit.onnx"),
         ]
 
-    def _opening_lead_probs32(self, game) -> np.ndarray:
+    @staticmethod
+    def _mask_to_hand24(mask: int) -> np.ndarray:
+        h = np.zeros(24, dtype=np.float32)
+        m = int(mask)
+        while m:
+            lsb = m & -m
+            c = lsb.bit_length() - 1
+            m ^= lsb
+            su = c // 13       # 0=C..3=S
+            rk = c % 13        # 0=2..12=A
+            ben_s = 3 - su     # 0=S, 1=H, 2=D, 3=C
+            ben_r = (12 - rk) if rk >= 8 else 5  # A=0,K=1,Q=2,J=3,T=4,x=5
+            h[ben_s * 6 + ben_r] += 1.0
+        return h
+
+    @staticmethod
+    def _build_auction_x(auction_calls: list[int], dealer: int, seat_ix: int, hands24: np.ndarray,
+                         vul_ns: bool, vul_ew: bool):
+        """Exact BEN model_version=3 (NS=1, EW=1, 24-card) auction tensor [N, n_steps, 193]."""
+        auc = [0] * dealer + [c + 2 for c in auction_calls]
+        n_steps = 0
+        bi = seat_ix
+        while bi < len(auc):
+            if auc[bi] != 0:
+                n_steps += 1
+            bi += 4
+        if n_steps == 0:
+            return None, []
+        auc_pad = auc + [1] * (4 * n_steps + 4)
+        n_samples = hands24.shape[0]
+        X = np.zeros((n_samples, n_steps, 193), dtype=np.float32)
+        X[:, :, 0] = 1.0  # NS=1
+        X[:, :, 1] = 1.0  # EW=1
+        X[:, :, 2] = float(vul_ns if (seat_ix % 2 == 0) else vul_ew)
+        X[:, :, 3] = float(vul_ew if (seat_ix % 2 == 0) else vul_ns)
+        h = hands24.reshape(n_samples, 4, 6)
+        shp = (h.sum(axis=2) - 3.25) / 1.75
+        hcp = ((h[:, :, 0] * 4 + h[:, :, 1] * 3 + h[:, :, 2] * 2 + h[:, :, 3] * 1).sum(axis=1, keepdims=True) - 10.0) / 4.0
+        X[:, :, 4:5] = hcp[:, None, :]
+        X[:, :, 5:9] = shp[:, None, :]
+        X[:, :, 9:33] = hands24[:, None, :]
+
+        bi = seat_ix
+        while auc_pad[bi] == 0:
+            bi += 4
+        targets = []
+        for st in range(n_steps):
+            targets.append(auc_pad[bi])
+            b_me = auc_pad[bi - 4] if bi - 4 >= 0 else 0
+            b_lho = auc_pad[bi - 3] if bi - 3 >= 0 else 0
+            b_par = auc_pad[bi - 2] if bi - 2 >= 0 else 0
+            b_rho = auc_pad[bi - 1] if bi - 1 >= 0 else 0
+            X[:, st, 33 + b_me] = 1.0
+            X[:, st, 73 + b_lho] = 1.0
+            X[:, st, 113 + b_par] = 1.0
+            X[:, st, 153 + b_rho] = 1.0
+            bi += 4
+        return X, targets
+
+    def _opening_lead_probs32(self, game, use_auction: bool = False) -> np.ndarray:
         c = game.contract()
         ben_strain = _our_to_ben_strain(c.strain)
         x = np.zeros((1, 42), dtype=np.float32)
@@ -93,8 +154,15 @@ class BenOnnxPlayer:
         x[0, 8] = 1.0 if def_vul else 0.0
         x[0, 9] = 1.0 if decl_vul else 0.0
         x[0, 10:42] = _hand_mask_to_ben32(game.hand(game.to_move()))
-        # Neutral bidding info prior (no auction in card-play-only mode)
         b = np.zeros((1, 15), dtype=np.float32)
+        if use_auction and self.bidinfo is not None and c.has_auction():
+            h24 = self._mask_to_hand24(game.initial_hand(game.to_move()))[None, :]
+            X, _ = self._build_auction_x(c.auction_calls, c.auction_dealer, game.to_move(), h24, c.vul_ns, c.vul_ew)
+            if X is not None:
+                inp_name = self.bidinfo.get_inputs()[0].name
+                p_hcp, p_shp = self.bidinfo.run(None, {inp_name: X})
+                b[0, :3] = p_hcp[0, -1, :]
+                b[0, 3:] = p_shp[0, -1, :]
         sess = self.lead_nt if c.strain == 4 else self.lead_suit
         return sess.run(None, {"X_input": x, "B_input": b})[0][0]
 
@@ -164,14 +232,14 @@ class BenOnnxPlayer:
 
         return x
 
-    def card_scores52(self, game) -> dict[int, float]:
+    def card_scores52(self, game, use_auction: bool = False) -> dict[int, float]:
         """Return BEN's neural probability score for every legal card in `game`."""
         legal = game.legal_actions()
         if len(legal) == 1:
             return {legal[0]: 1.0}
         c = game.contract()
         if game.n_plies() == 0:
-            probs32 = self._opening_lead_probs32(game)
+            probs32 = self._opening_lead_probs32(game, use_auction=use_auction)
         else:
             player_i = (game.to_move() - (c.declarer + 1)) & 3
             x = self._build_x_play(game, player_i)
@@ -188,6 +256,39 @@ class BenOnnxPlayer:
             # Tiny tie-break preferring lower rank among equivalent small spot cards (2..7)
             scores[card52] = float(probs32[c32]) - 1e-6 * float(card52 % 13)
         return scores
+
+    def score_worlds_auction(self, game, worlds: list) -> np.ndarray:
+        """Compute BEN bidder.onnx log-likelihood of hidden seats' bids for every sampled world."""
+        n = len(worlds)
+        ll = np.zeros(n, dtype=np.float64)
+        c = game.contract()
+        if self.bidder is None or not c.has_auction() or n == 0:
+            return ll
+        # Determine hidden seats for current observer
+        seat = game.to_move()
+        dummy = c.dummy()
+        decl = c.declarer
+        known = {seat}
+        if game.dummy_visible():
+            known.add(dummy)
+        if seat == dummy or seat == decl:
+            known.add(decl)
+            known.add(dummy)
+        hidden = [s for s in range(4) if s not in known]
+
+        inp_name = self.bidder.get_inputs()[0].name
+        calls = c.auction_calls
+        dealer = c.auction_dealer
+        for s in hidden:
+            h24 = np.stack([self._mask_to_hand24(wg.initial_hand(s)) for wg in worlds], axis=0)
+            X, targets = self._build_auction_x(calls, dealer, s, h24, c.vul_ns, c.vul_ew)
+            if X is None:
+                continue
+            probs = self.bidder.run(None, {inp_name: X})[0]  # [N, n_steps, 40]
+            for st, tgt in enumerate(targets):
+                p = np.clip(probs[:, st, tgt].astype(np.float64), 1e-6, 1.0)
+                ll += np.log(p)
+        return ll
 
     def act(self, game) -> int:
         legal = game.legal_actions()
@@ -206,12 +307,16 @@ class BenDdsPlayer:
     """
 
     def __init__(self, bridge_cpp_mod, worlds: int = 16, nn_weight: float = 20.0,
-                 seed: int = 1, ben_root: str | Path | None = None):
+                 seed: int = 1, ben_root: str | Path | None = None,
+                 use_auction: bool = False, auc_pool: int = 6, auc_weight: float = 0.45):
         self.cpp = bridge_cpp_mod
         self.nn = BenOnnxPlayer(ben_root=ben_root)
         self.worlds = max(1, worlds)
         self.nn_weight = nn_weight
         self.seed = seed
+        self.use_auction = use_auction
+        self.auc_pool = max(1, auc_pool)
+        self.auc_weight = auc_weight
         self._step = 0
 
     def act(self, game) -> int:
@@ -219,13 +324,30 @@ class BenDdsPlayer:
         if len(legal) == 1:
             return legal[0]
         self._step += 1
-        nn_scores = self.nn.card_scores52(game)
-        # Opening lead (ply 0): BEN uses its dedicated opening-lead NN + DDS over sampled worlds
-        worlds = self.cpp.sample_worlds(game, self.worlds, self.seed * 1000003 + self._step)
-        if not worlds:
-            return max(legal, key=lambda c: nn_scores[c])
-
         c = game.contract()
+        do_auc = self.use_auction and c.has_auction() and (self.nn.bidder is not None)
+        nn_scores = self.nn.card_scores52(game, use_auction=do_auc)
+        n_draw = self.worlds * self.auc_pool if do_auc else self.worlds
+        worlds = self.cpp.sample_worlds(game, n_draw, self.seed * 1000003 + self._step)
+        if not worlds:
+            return max(legal, key=lambda card: nn_scores[card])
+
+        if do_auc and len(worlds) > self.worlds:
+            ll = self.nn.score_worlds_auction(game, worlds)
+            top_idx = np.argsort(ll)[-self.worlds:]
+            worlds = [worlds[int(i)] for i in top_idx]
+            ll_top = ll[top_idx]
+            mx = float(ll_top.max())
+            wts = np.exp(np.clip(self.auc_weight * (ll_top - mx), -40.0, 0.0))
+            wts /= float(wts.sum())
+        elif do_auc:
+            ll = self.nn.score_worlds_auction(game, worlds)
+            mx = float(ll.max())
+            wts = np.exp(np.clip(self.auc_weight * (ll - mx), -40.0, 0.0))
+            wts /= float(wts.sum())
+        else:
+            wts = np.full(len(worlds), 1.0 / len(worlds), dtype=np.float64)
+
         seat = game.to_move()
         seat_is_decl = (game.team(seat) == c.declarer_team())
         rem_total = 13 - (game.n_plies() // 4)
@@ -233,14 +355,14 @@ class BenDdsPlayer:
         decl_vul = c.declarer_vul()
 
         dd_sum = {card: 0.0 for card in legal}
-        for wg in worlds:
+        for wi, wg in enumerate(worlds):
+            w = float(wts[wi])
             for card, rem_tr in self.cpp.dds_solve_moves(wg):
                 if card not in dd_sum:
                     continue
                 tot_decl = (decl_so_far + rem_tr) if seat_is_decl else (decl_so_far + (rem_total - rem_tr))
                 ds = self.cpp.contract_score(c.level, c.strain, c.doubled, decl_vul, tot_decl)
-                dd_sum[card] += float(ds if seat_is_decl else -ds)
+                dd_sum[card] += w * float(ds if seat_is_decl else -ds)
 
-        inv_w = 1.0 / len(worlds)
-        return max(legal, key=lambda card: dd_sum[card] * inv_w + self.nn_weight * nn_scores[card])
+        return max(legal, key=lambda card: dd_sum[card] + self.nn_weight * nn_scores[card])
 
