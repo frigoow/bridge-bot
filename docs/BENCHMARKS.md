@@ -182,6 +182,23 @@ All rows use the exact same Suit+NT specialist networks (`suit_exit3_fast`/`suit
 | **`dds8:rex8`** *(neural tricks 1–5, DDS last 8)* | Last 8 | 96 | **+0.33 ± 0.32** | **+0.036 ± 0.037** | **30.7% / 42.8% / 26.5%** | **82.43** | 100.40 |
 | **`dds13:rex13`** *(matched trick-1 DDS)* | All 13 | 20 | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 101.96 | 89.87 |
 
+### 4. Path A — Auction-Aware Card Play (`AuctionModel` `BRA1`, 2026-11-25, commit `82ea64b`)
+
+Trained `AuctionNet` (`309,878` params, ~1.2 MB, 65s on RTX 3060) on **47,314 unique real auctioned PBN deals (566,571 legal bids)** from `external/ben/Boards/{BBA,Thorvald,Eamon}`, with strict 52-card deduplicated zero-overlap holdouts:
+- **1,000 Stratified Unseen Real PBNs (`data/eval_pbn_unseen_1000.pbn`):** legal bid CE `0.4552`, exact top-1 bid accuracy **`84.3%`**, auction-only 4-seat card accuracy **`34.5%`** (vs `25.0%` uniform).
+- **292 Real Human/GIB BBO Daylongs (`data/eval_bbo_unseen.pbn`, zero BBO in train):** legal bid CE `0.7534`, exact top-1 bid accuracy **`76.7%`**, auction-only 4-seat card accuracy **`33.7%`**.
+
+Card-play evaluations using `auc=checkpoints/auction_v1.bin:auclik=0.45:aucprior=0.6:pool=4` inside `cardbot::drawWorlds` (Suit+NT specialists, `seed=1`):
+
+| A vs B | Dataset | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **`48w:dds8:rex8` WITH `AuctionModel`** vs **WITHOUT** *(same bot)* | Unseen Real PBNs | 1000 | **+0.26 ± 0.29** | **+0.037 ± 0.033** | **29.6% / 46.2% / 24.2%** | 58.42 | 55.01 |
+| **`20w:dds13:rex13` WITH `AuctionModel`** vs **WITHOUT** *(same bot)* | Unseen Real PBNs | 1000 | **+0.10 ± 0.28** | **+0.051 ± 0.029** | **26.5% / 53.4% / 20.1%** | **65.49** | 92.63 |
+| **`48w:dds8:rex8` WITH `AuctionModel`** vs **WITHOUT** *(same bot)* | Real BBO Daylongs | 292 | +0.12 ± 0.55 | +0.017 ± 0.068 | 29.5% / 40.1% / 30.5% | 57.35 | 55.51 |
+| **Auction-Aware `96w:dds8:rex8`** *(NO trick-1 DDS!)* vs **`ben_dds:16`** | **Real BBO Daylongs** | 292 | **+0.62 ± 0.55** | **+0.075 ± 0.065** | **32.2% / 45.2% / 22.6%** | **91.53** | 102.94 |
+| **Auction-Aware `96w:dds8:rex8`** *(NO trick-1 DDS!)* vs **`ben_dds:16`** | **Unseen Real PBNs** | 1000 | **+0.16 ± 0.31** | **+0.044 ± 0.032** | **29.5% / 46.4% / 24.1%** | **93.65** | 100.27 |
+
+
 
 
 
