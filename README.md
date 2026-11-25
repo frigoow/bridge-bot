@@ -43,16 +43,19 @@ Fetch established external opponents (BEN ONNX models + BBO PBN boards, and `bri
 ./scripts/fetch_opponents.sh
 ```
 
-## Headline Results (Suit / Trump Specialist, 1,000 Mirrored Pairs)
+## Headline Results (Suit + NT Specialists, 1,000 Mirrored Pairs)
 
-Built purely via the `cardbot-framework` recipe (`ExIt` warm-start → `16M`-deal `DMC` self-play → `ExIt3` polish, zero human/bot game logs), evaluated on **1,000 mirrored Suit pairs (2,000 deals, `seed=1000`)** against BEN's pretrained ONNX+DDS engine (`ben_dds:16`):
+Built purely via the `cardbot-framework` recipe (`ExIt` warm-start → `16M`-deal `DMC` self-play → `ExIt3` polish for Suit and NT specialists, zero human/bot game logs), evaluated on **1,000 mirrored pairs (2,000 deals, `seed=1000`)** against BEN's pretrained ONNX neural nets (`ben_nn`) and ONNX+DDS engine (`ben_dds:16`):
 
-| Our Bot vs Opponent (Suit, 1,000 pairs) | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
-|---|---:|---:|---:|---:|
-| **Pure `FastNet + cardbot/search.h` (`48w:dds8:rex8`, NO trick-1 DDS)** vs `pimc_dds:16` | **+0.46 ± 0.33** | **+0.051 ± 0.034** | 31.4% / 43.2% / 25.4% | **49.6** vs 94.7 ms |
-| **Pure `FastNet + cardbot/search.h` (`48w:dds8:rex8`, NO trick-1 DDS)** vs **`ben_dds:16`** | **+0.01 ± 0.31** | −0.004 ± 0.031 | 27.3% / 45.7% / 27.0% | **49.8** vs 98.5 ms |
-| **Pure `FastNet + cardbot/search.h` (`96w:dds8:rex8`, NO trick-1 DDS, time-matched)** vs **`ben_dds:16`** | **+0.39 ± 0.31** | **+0.033 ± 0.032** | **30.0% / 44.8% / 25.2%** | **83.6** vs 100.6 ms |
-| **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | **+0.46 ± 0.31** | **+0.056 ± 0.031** | **29.5% / 49.3% / 21.2%** | 99.1 vs 90.3 ms |
+| Our Bot vs Opponent (1,000 mirrored pairs = 2,000 deals) | Strain | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
+|---|---|---:|---:|---:|---:|
+| **Standalone `nt_dmc16m` (`QGRU`, zero search!)** vs **`ben_nn`** | NT | **+0.45 ± 0.30** | **+0.077 ± 0.056** | 38.2% / 27.1% / 34.7% | 6.1 vs 5.7 ms |
+| **Pure `FastNet + Search` (`96w:dds8:rex8`, NO trick-1 DDS)** vs **`ben_dds:16`** | Suit | **+0.39 ± 0.31** | **+0.033 ± 0.032** | 30.0% / 44.8% / 25.2% | **83.6** vs 100.6 ms |
+| **Pure `FastNet + Search` (`96w:dds8:rex8`, NO trick-1 DDS)** vs **`ben_dds:16`** | NT | **+0.31 ± 0.28** | **+0.096 ± 0.053** | 37.1% / 34.4% / 28.5% | **82.1** vs 95.6 ms |
+| **Pure `FastNet + Search` (`96w:dds8:rex8`, NO trick-1 DDS)** vs **`ben_dds:16`** | **All** | **+0.33 ± 0.32** | **+0.036 ± 0.037** | **30.7% / 42.8% / 26.5%** | **82.4** vs 100.4 ms |
+| **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | Suit | **+0.46 ± 0.31** | **+0.056 ± 0.031** | 29.5% / 49.3% / 21.2% | 99.1 vs 90.3 ms |
+| **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | NT | **+0.66 ± 0.24** | **+0.127 ± 0.049** | **39.2% / 35.5% / 25.3%** | 108.4 vs 87.8 ms |
+| **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | **All** | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 102.0 vs 89.9 ms |
 
 Full progression, standalone network tables, and ablations are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
