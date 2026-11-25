@@ -197,6 +197,22 @@ Card-play evaluations using `auc=checkpoints/auction_v1.bin:auclik=0.45:aucprior
 | **`48w:dds8:rex8` WITH `AuctionModel`** vs **WITHOUT** *(same bot)* | Real BBO Daylongs | 292 | +0.12 ± 0.55 | +0.017 ± 0.068 | 29.5% / 40.1% / 30.5% | 57.35 | 55.51 |
 | **Auction-Aware `96w:dds8:rex8`** *(NO trick-1 DDS!)* vs **`ben_dds:16`** | **Real BBO Daylongs** | 292 | **+0.62 ± 0.55** | **+0.075 ± 0.065** | **32.2% / 45.2% / 22.6%** | **91.53** | 102.94 |
 | **Auction-Aware `96w:dds8:rex8`** *(NO trick-1 DDS!)* vs **`ben_dds:16`** | **Unseen Real PBNs** | 1000 | **+0.16 ± 0.31** | **+0.044 ± 0.032** | **29.5% / 46.4% / 24.1%** | **93.65** | 100.27 |
+| **`48w:dds8:rex8` WITH `aucp=8` pre-filter** vs **WITHOUT Auction** *(same bot)* | Unseen Real PBNs | 1000 | **+0.46 ± 0.32** | **+0.078 ± 0.034** | **32.6% / 45.0% / 22.4%** | 89.35 | 56.71 |
+
+### 5. Fair Shared-BEN-Bidder Trump-Only Card-Play Battle (`585`-dim `BridgeSuitAucEncoder`, 2026-11-25)
+
+Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (eliminating bidding-model mismatch so every IMP measures pure card play). Trained on **500,000 BEN-bid Trump deals (`data/ben_suit_train_500k.bin`)** via 8M-deal warm-started DMC (`suit_auc_dmc8m`, `585`-dim = `570` + `15` canonical `bidinfo` floats) + 12k-deal ExIt1 (`suit_auc_exit1`), evaluated on **1,000 strictly unseen BEN-bid Trump deals (`data/ben_suit_eval_1000.bin`)**:
+
+| A vs B (1,000 strictly unseen BEN-bid Trump pairs, `seed=1000`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| *(Pre-train 570-dim)* `qgru:suit_dmc16m_best_ben.bin` vs `ben_nn_auc` | 1000 | −0.77 ± 0.29 | −0.202 ± 0.037 | 18.8% / 37.9% / 43.3% | 5.40 | 24.63 |
+| *(Pre-train 570-dim)* `fast:suit_exit3_fast.bin` vs `ben_nn_auc` | 1000 | −0.42 ± 0.29 | −0.089 ± 0.035 | 24.6% / 38.2% / 37.2% | 1.81 | 20.64 |
+| `qgru:suit_auc_dmc8m_best_ben.bin` *(585-dim, zero search)* vs `ben_nn_auc` | 1000 | **−0.53 ± 0.30** | −0.166 ± 0.036 | 22.3% / 35.8% / 41.9% | 5.95 | 5.58 |
+| **`fast:suit_auc_exit1_fast.bin`** *(585-dim, 0.74 MB, zero search)* vs **`ben_nn_auc`** | 1000 | **−0.18 ± 0.28** | **−0.045 ± 0.033** | 25.7% / 41.3% / 33.0% | **1.36** | 3.69 |
+| `shared_auc+search:64:pool=6:dds8:rex8` *(NO trick-1 DDS)* vs `ben_dds_auc:16:6` | 1000 | −0.43 ± 0.27 | −0.082 ± 0.031 | 21.3% / 46.7% / 32.0% | 156.66 | 137.89 |
+| **`shared_auc+search:16:pool=6:dds13:rex13`** *(matched 16w)* vs **`ben_dds_auc:16:6`** | 1000 | **−0.10 ± 0.24** | **−0.027 ± 0.028** | 21.5% / 53.6% / 24.9% | **105.47** | 111.05 |
+| **`shared_auc+search:32:pool=6:dds13:rex13`** *(matched 32w)* vs **`ben_dds_auc:32:6`** | 1000 | **−0.17 ± 0.23** | **−0.021 ± 0.026** | 19.7% / 56.7% / 23.6% | **201.29** | 213.91 |
+
 
 
 
