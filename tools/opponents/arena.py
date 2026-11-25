@@ -36,7 +36,15 @@ def make_player_factory(spec: str):
             if not hasattr(local, "ben"):
                 local.ben = BenOnnxPlayer(threads=1)
             ben = local.ben
-            return lambda g: max(g.legal_actions(), key=lambda c: ben.card_scores52(g, use_auction=True)[c]) if len(g.legal_actions()) > 1 else g.legal_actions()[0]
+
+            def act(g):
+                legal = g.legal_actions()
+                if len(legal) == 1:
+                    return legal[0]
+                scores = ben.card_scores52(g, use_auction=True)
+                return max(legal, key=lambda c: scores[c])
+
+            return act
 
         return factory
 
