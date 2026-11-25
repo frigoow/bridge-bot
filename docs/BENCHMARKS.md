@@ -169,6 +169,20 @@ Warm-started from `nt_exit2_{q,belief}.pt` via `scripts/overnight_nt.sh` (**24×
 | **`search:96:dds8:rex8` (Suit+NT Specialists, NO trick-1 DDS, time-matched!)** vs **`ben_dds:16`** | 1000 | **+0.33 ± 0.32** | **+0.036 ± 0.037** | **30.7% / 42.8% / 26.5%** | **82.43** | 100.40 |
 | **`search:20:dds13:rex13` (Suit+NT Specialists, matched DDS)** vs **`ben_dds:16`** | 1000 | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 101.96 | 89.87 |
 
+### 3. Endgame Solver / DDS Threshold Sweep (1,000 All-Strains Mirrored Pairs vs `ben_dds:16`, `seed=1000`)
+
+All rows use the exact same Suit+NT specialist networks (`suit_exit3_fast`/`suit_dmc16m` + `nt_exit3_fast`/`nt_dmc16m`, `qb=0.08, lik=0.25`; `qb=0.04, norace` at `dds13`), varying only when playouts hand off to an exact endgame solver:
+
+| Endgame Handoff | External DDS? | Worlds | IMPs/board vs `ben_dds:16` | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `dds0:rex0` *(100% pure neural playouts, tricks 1–13)* | **None** | 96 | −0.67 ± 0.34 | −0.108 ± 0.038 | 24.2% / 37.5% / 38.3% | **55.62** | 96.82 |
+| `ab4:rex0` *(`cardbot::EndgameSolver` alpha-beta last 4 tricks)* | **None** | 96 | −0.31 ± 0.32 | −0.045 ± 0.038 | 27.4% / 40.1% / 32.5% | **68.57** | 99.25 |
+| `dds4:rex4` *(DDS last 4 tricks)* | Last 4 | 96 | −0.31 ± 0.32 | −0.048 ± 0.039 | 27.1% / 39.8% / 33.1% | 72.69 | 99.20 |
+| **`dds6:rex6`** *(neural tricks 1–7, DDS last 6)* | Last 6 | 96 | **+0.11 ± 0.31** | −0.001 ± 0.037 | 27.9% / 43.6% / 28.5% | **66.45** | 98.98 |
+| **`dds8:rex8`** *(neural tricks 1–5, DDS last 8)* | Last 8 | 96 | **+0.33 ± 0.32** | **+0.036 ± 0.037** | **30.7% / 42.8% / 26.5%** | **82.43** | 100.40 |
+| **`dds13:rex13`** *(matched trick-1 DDS)* | All 13 | 20 | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 101.96 | 89.87 |
+
+
 
 
 
