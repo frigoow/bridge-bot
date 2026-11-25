@@ -43,6 +43,19 @@ Fetch established external opponents (BEN ONNX models + BBO PBN boards, and `bri
 ./scripts/fetch_opponents.sh
 ```
 
+## Headline Results (Suit / Trump Specialist, 1,000 Mirrored Pairs)
+
+Built purely via the `cardbot-framework` recipe (`ExIt` warm-start → `16M`-deal `DMC` self-play → `ExIt3` polish, zero human/bot game logs), evaluated on **1,000 mirrored Suit pairs (2,000 deals, `seed=1000`)** against BEN's pretrained ONNX+DDS engine (`ben_dds:16`):
+
+| Our Bot vs Opponent (Suit, 1,000 pairs) | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
+|---|---:|---:|---:|---:|
+| **Pure `FastNet + cardbot/search.h` (`48w:dds8:rex8`, NO trick-1 DDS)** vs `pimc_dds:16` | **+0.46 ± 0.33** | **+0.051 ± 0.034** | 31.4% / 43.2% / 25.4% | **49.6** vs 94.7 ms |
+| **Pure `FastNet + cardbot/search.h` (`48w:dds8:rex8`, NO trick-1 DDS)** vs **`ben_dds:16`** | **+0.01 ± 0.31** | −0.004 ± 0.031 | 27.3% / 45.7% / 27.0% | **49.8** vs 98.5 ms |
+| **Pure `FastNet + cardbot/search.h` (`96w:dds8:rex8`, NO trick-1 DDS, time-matched)** vs **`ben_dds:16`** | **+0.39 ± 0.31** | **+0.033 ± 0.032** | **30.0% / 44.8% / 25.2%** | **83.6** vs 100.6 ms |
+| **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | **+0.46 ± 0.31** | **+0.056 ± 0.031** | **29.5% / 49.3% / 21.2%** | 99.1 vs 90.3 ms |
+
+Full progression, standalone network tables, and ablations are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 ## Established Opponents & Baseline Ladder
 
 Full results, timings, and double-dummy diagnostics are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).

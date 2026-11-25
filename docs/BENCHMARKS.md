@@ -109,6 +109,29 @@ Combined Suit + NT specialist search (`sfast`/`nfast` + `sq`/`nq`, 300 mirrored 
 | `search:48:dds8:rex8:suit_exit2_fast:suit_exit2_q:qb=0.08:lik=0.25` vs `pimc_dds:16` | 200 | −0.36 ± 0.69 | −0.05 ± 0.07 | 21.5% / 45.5% / 33.0% | 53.81 | 96.88 |
 | **`search:48:dds8:rex8:suit_exit2_fast:suit_dmc_best_ben:suit_dmc_belief:qb=0.08:lik=0.25`** vs `pimc_dds:16` | 200 | **+0.69 ± 0.68** | **+0.08 ± 0.07** | **27.5% / 48.0% / 24.5%** | **51.05** | 96.53 |
 
+### Overnight 16M Suit-Only DMC + Suit ExIt Gen 3 Polish (`suit_dmc16m`, `suit_exit3`, 2026-11-25)
+
+Warm-started from `suit_exit2_{q,belief}.pt` via `scripts/overnight_suit.sh`:
+- **Stage 1 (16,000,000 Suit DMC deals, ~6.5h on RTX 3060, `batch_size=2048, replay_rounds=8, lr=1e-4 → 1.5e-5, eps=0.035 → 0.008`):**
+  - `QGRU` vs `rule` (200 Suit pairs): `+1.77 ± 0.86` → **`+4.15 ± 0.80 IMPs/bd`** (peak at 14.3M, 66.0% win)
+  - `QGRU` vs `ben_nn` (200 Suit pairs): `−2.12 ± 0.77` → **`−0.52 ± 0.71 IMPs/bd`** (best at 14.85M, `suit_dmc16m_best_ben.bin`)
+  - Online `BeliefNet` CE on unseen Suit deals: `0.622` → **`0.444–0.489`** (`suit_dmc16m_belief_best_ben.bin`)
+- **Stage 2 (Suit ExIt Gen 3 Polish: 12,000 Suit deals / 493,345 states, `worlds=16, dds=10, rex=10`, teacher = `suit_exit2_fast` + `suit_dmc16m_best_ben` (`qb=0.08`) + `suit_dmc16m_belief_best_ben` (`lik=0.25`), 12 epochs):**
+  - `q_top1 = 62.3%`, `fast_top1 = 52.4%`, `suit_exit3_fast` vs `rule` (200 Suit pairs) = `+2.98 ± 0.77 IMPs/bd`, `suit_exit3_q` vs `rule` = `+3.31 ± 0.83 IMPs/bd`.
+
+**High-Precision 1,000-Mirrored-Pair (2,000-Deal) Suit Benchmarks (`seed=1000`, Suit contracts):**
+
+| A vs B (Suit only) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `fast:suit_exit3_fast.bin` *(0.74 MB, zero search)* vs `ben_nn` | 1000 | −0.43 ± 0.33 | −0.056 ± 0.034 | 25.3% / 42.4% / 32.3% | **1.37** | 3.69 |
+| `qgru:suit_dmc16m_best_ben.bin` *(pure self-play, zero search)* vs `ben_nn` | 1000 | −0.67 ± 0.35 | −0.157 ± 0.038 | 24.1% / 34.1% / 41.8% | 6.00 | 5.55 |
+| `qgru:suit_exit3_q.bin` *(ExIt3-polished QGRU, zero search)* vs `ben_nn` | 1000 | −0.87 ± 0.33 | −0.102 ± 0.034 | 23.2% / 38.1% / 38.7% | 6.15 | 5.70 |
+| **`search:48:dds8:rex8:sfast=suit_exit3:sq=dmc16m:sbelief=dmc16m:qb=0.08:lik=0.25`** *(NO trick-1 DDS!)* vs `pimc_dds:16` | 1000 | **+0.46 ± 0.33** | **+0.051 ± 0.034** | **31.4% / 43.2% / 25.4%** | **49.59** | 94.75 |
+| **`search:48:dds8:rex8:sfast=suit_exit3:sq=dmc16m:sbelief=dmc16m:qb=0.08:lik=0.25`** *(NO trick-1 DDS!)* vs `ben_dds:16` | 1000 | **+0.01 ± 0.31** | −0.004 ± 0.031 | **27.3% / 45.7% / 27.0%** | **49.80** | 98.48 |
+| **`search:96:dds8:rex8:sfast=suit_exit3:sq=dmc16m:sbelief=dmc16m:qb=0.08:lik=0.25`** *(NO trick-1 DDS, time-matched!)* vs **`ben_dds:16`** | 1000 | **+0.39 ± 0.31** | **+0.033 ± 0.032** | **30.0% / 44.8% / 25.2%** | **83.65** | 100.64 |
+| **`search:20:dds13:rex13:sfast=suit_exit3:sq=dmc16m:sbelief=dmc16m:qb=0.04:lik=0.25:norace`** *(matched DDS)* vs **`ben_dds:16`** | 1000 | **+0.46 ± 0.31** | **+0.056 ± 0.031** | **29.5% / 49.3% / 21.2%** | 99.06 | 90.29 |
+
+
 
 
 
