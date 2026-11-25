@@ -44,6 +44,7 @@ struct SearchOptions {
     double auc_lik_temp = 1.0;
     double auc_prior_weight = 0.0; // > 0: blend AuctionModel card-location prior into proposal sampling
     double auc_card_temp = 1.0;
+    int auc_prefilter = 1;         // > 1: draw K candidates per world and keep best by AuctionModel log-likelihood
     std::shared_ptr<const AuctionModel> auction_model;
     std::shared_ptr<const cardbot::FastPolicyModel> fast_policy;
     std::shared_ptr<const cardbot::QGruModel> q_model;

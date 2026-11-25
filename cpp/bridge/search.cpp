@@ -92,6 +92,7 @@ struct BridgeWorldSource {
     const AuctionCache* auc_cache = nullptr;
     double auc_lik_weight = 0.0;
     double auc_lik_temp = 1.0;
+    int auc_prefilter = 1;
 
     double count() const { return sampler.count(); }
 
@@ -103,9 +104,32 @@ struct BridgeWorldSource {
         return root.withRemainingHands(hands);
     }
 
-    std::optional<std::array<Mask, 4>> draw(std::mt19937_64& rng) const {
+    std::optional<std::array<Mask, 4>> drawOne(std::mt19937_64& rng) const {
         if (use_belief) return sampler.sampleWeighted(rng, belief_weights);
         return sampler.sample(rng);
+    }
+
+    std::optional<std::array<Mask, 4>> draw(std::mt19937_64& rng) const {
+        if (auc_prefilter <= 1 || auc_model == nullptr || auc_cache == nullptr || auc_cache->n_calls <= 0) {
+            return drawOne(rng);
+        }
+        // Fast C++ tournament pre-filter: draw K candidate worlds and keep the most auction-consistent one!
+        // Preserves 100% world diversity while rejecting auction-inconsistent hands before playouts/DDS.
+        std::optional<std::array<Mask, 4>> best_h;
+        double best_ll = -1e30;
+        const auto& hseats = sampler.hiddenSeats();
+        const int nh = sampler.numHiddenSeats();
+        for (int k = 0; k < auc_prefilter; ++k) {
+            auto h = drawOne(rng);
+            if (!h) continue;
+            const BridgeGame wg = root.withRemainingHands(*h);
+            const double ll = auc_model->logLikelihood(wg.initialHands(), hseats, nh, *auc_cache, auc_lik_temp);
+            if (!best_h || ll > best_ll) {
+                best_ll = ll;
+                best_h = std::move(h);
+            }
+        }
+        return best_h;
     }
 
     std::optional<std::array<Mask, 4>> drawHard(std::mt19937_64& rng) const {
@@ -265,18 +289,22 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
                                   ? opt.auction_model.get()
                                   : nullptr;
     AuctionCache auc_cache;
-    if (auc && (opt.auc_lik_weight > 0.0 || opt.auc_prior_weight > 0.0)) {
+    if (auc && (opt.auc_lik_weight > 0.0 || opt.auc_prior_weight > 0.0 || opt.auc_prefilter > 1)) {
         auc->precompute(g.contract(), auc_cache, opt.auc_card_temp);
     }
 
     BridgeWorldSource src{g, sampler, false, {}, fast, opt.fast_lik_weight, opt.fast_lik_temp,
-                          auc, auc ? &auc_cache : nullptr, opt.auc_lik_weight, opt.auc_lik_temp};
-    const bool need_m_raw = (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) ||
-                            (auc && opt.auc_prior_weight > 0.0);
+                          auc, auc ? &auc_cache : nullptr, opt.auc_lik_weight, opt.auc_lik_temp,
+                          opt.auc_prefilter};
+    // On ply 0 of a real auctioned deal, let AuctionModel drive the prior cleanly instead of
+    // letting a contract-only (no-auction) BeliefNet fight the real auction.
+    const bool use_bnet = (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) &&
+                          !(auc && opt.auc_prior_weight > 0.0 && g.nPlies() == 0);
+    const bool need_m_raw = use_bnet || (auc && opt.auc_prior_weight > 0.0);
     std::array<std::array<double, 3>, kCards> m_raw{};
     if (need_m_raw) m_raw = sampler.cardMarginals();
 
-    if (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) {
+    if (use_bnet) {
         std::vector<float> state(kBridgeStateDim);
         std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
         const int np = encodeBridgeState(g, seat, state.data(), hist.data());

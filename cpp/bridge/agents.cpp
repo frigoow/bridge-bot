@@ -190,6 +190,8 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
                 o.auc_prior_weight = std::stod(p.substr(9));
             } else if (p.rfind("auct=", 0) == 0) {
                 o.auc_card_temp = std::stod(p.substr(5));
+            } else if (p.rfind("aucp=", 0) == 0) {
+                o.auc_prefilter = std::max(1, std::stoi(p.substr(5)));
             } else if (p.rfind("z=", 0) == 0) {
                 o.z = std::stod(p.substr(2));
             } else if (p == "norace") {
