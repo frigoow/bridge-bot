@@ -67,6 +67,78 @@ std::shared_ptr<const AuctionModel> loadAuction(const std::string& path) {
 
 }  // namespace
 
+SearchOptions parseSearchOptions(const std::string& spec) {
+    const auto parts = splitColon(spec);
+    if (parts.empty() || parts[0] != "search") {
+        throw std::invalid_argument("bridge::parseSearchOptions: expected 'search:...' spec, got '" + spec + "'");
+    }
+    SearchOptions o;
+    if (parts.size() >= 2 && !parts[1].empty() && std::isdigit(static_cast<unsigned char>(parts[1][0]))) {
+        o.worlds = std::stoi(parts[1]);
+    }
+    for (std::size_t i = 1; i < parts.size(); ++i) {
+        const std::string& p = parts[i];
+        if (p.rfind("dds", 0) == 0) {
+            o.endgame_tricks = std::stoi(p.substr(3));
+            o.use_dds_endgame = true;
+        } else if (p.rfind("ab", 0) == 0) {
+            o.endgame_tricks = std::stoi(p.substr(2));
+            o.use_dds_endgame = false;
+        } else if (p.rfind("rex", 0) == 0) {
+            o.root_exact_tricks = std::stoi(p.substr(3));
+        } else if (p.rfind("fast=", 0) == 0) {
+            o.fast_policy = loadFast(p.substr(5));
+        } else if (p.rfind("sfast=", 0) == 0) {
+            o.suit_fast_policy = loadFast(p.substr(6));
+        } else if (p.rfind("nfast=", 0) == 0) {
+            o.nt_fast_policy = loadFast(p.substr(6));
+        } else if (p.rfind("q=", 0) == 0) {
+            o.q_model = loadQGru(p.substr(2));
+        } else if (p.rfind("sq=", 0) == 0) {
+            o.suit_q_model = loadQGru(p.substr(3));
+        } else if (p.rfind("nq=", 0) == 0) {
+            o.nt_q_model = loadQGru(p.substr(3));
+        } else if (p.rfind("qb=", 0) == 0) {
+            o.q_blend = std::stod(p.substr(3));
+        } else if (p.rfind("pb=", 0) == 0) {
+            o.policy_blend = std::stod(p.substr(3));
+        } else if (p.rfind("bt=", 0) == 0) {
+            o.belief_temp = std::stod(p.substr(3));
+        } else if (p.rfind("pool=", 0) == 0) {
+            o.pool = std::stoi(p.substr(5));
+        } else if (p.rfind("belief=", 0) == 0) {
+            o.belief_model = loadBelief(p.substr(7));
+        } else if (p.rfind("sbelief=", 0) == 0) {
+            o.suit_belief_model = loadBelief(p.substr(8));
+        } else if (p.rfind("nbelief=", 0) == 0) {
+            o.nt_belief_model = loadBelief(p.substr(8));
+        } else if (p.rfind("lik=", 0) == 0) {
+            o.fast_lik_weight = std::stod(p.substr(4));
+        } else if (p.rfind("likt=", 0) == 0) {
+            o.fast_lik_temp = std::stod(p.substr(5));
+        } else if (p.rfind("auc=", 0) == 0) {
+            o.auction_model = loadAuction(p.substr(4));
+        } else if (p.rfind("auclik=", 0) == 0) {
+            o.auc_lik_weight = std::stod(p.substr(7));
+        } else if (p.rfind("auclikt=", 0) == 0) {
+            o.auc_lik_temp = std::stod(p.substr(8));
+        } else if (p.rfind("aucprior=", 0) == 0) {
+            o.auc_prior_weight = std::stod(p.substr(9));
+        } else if (p.rfind("auct=", 0) == 0) {
+            o.auc_card_temp = std::stod(p.substr(5));
+        } else if (p.rfind("aucp=", 0) == 0) {
+            o.auc_prefilter = std::max(1, std::stoi(p.substr(5)));
+        } else if (p.rfind("z=", 0) == 0) {
+            o.z = std::stod(p.substr(2));
+        } else if (p == "norace") {
+            o.race = false;
+        } else if (p == "race") {
+            o.race = true;
+        }
+    }
+    return o;
+}
+
 cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
     const auto parts = splitColon(spec);
     if (parts.empty()) throw std::invalid_argument("bridge::makeAgent: empty spec");
@@ -136,71 +208,7 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
     }
 
     if (kind == "search") {
-        SearchOptions o;
-        if (parts.size() >= 2 && !parts[1].empty() && std::isdigit(static_cast<unsigned char>(parts[1][0]))) {
-            o.worlds = std::stoi(parts[1]);
-        }
-        for (std::size_t i = 1; i < parts.size(); ++i) {
-            const std::string& p = parts[i];
-            if (p.rfind("dds", 0) == 0) {
-                o.endgame_tricks = std::stoi(p.substr(3));
-                o.use_dds_endgame = true;
-            } else if (p.rfind("ab", 0) == 0) {
-                o.endgame_tricks = std::stoi(p.substr(2));
-                o.use_dds_endgame = false;
-            } else if (p.rfind("rex", 0) == 0) {
-                o.root_exact_tricks = std::stoi(p.substr(3));
-            } else if (p.rfind("fast=", 0) == 0) {
-                o.fast_policy = loadFast(p.substr(5));
-            } else if (p.rfind("sfast=", 0) == 0) {
-                o.suit_fast_policy = loadFast(p.substr(6));
-            } else if (p.rfind("nfast=", 0) == 0) {
-                o.nt_fast_policy = loadFast(p.substr(6));
-            } else if (p.rfind("q=", 0) == 0) {
-                o.q_model = loadQGru(p.substr(2));
-            } else if (p.rfind("sq=", 0) == 0) {
-                o.suit_q_model = loadQGru(p.substr(3));
-            } else if (p.rfind("nq=", 0) == 0) {
-                o.nt_q_model = loadQGru(p.substr(3));
-            } else if (p.rfind("qb=", 0) == 0) {
-                o.q_blend = std::stod(p.substr(3));
-            } else if (p.rfind("pb=", 0) == 0) {
-                o.policy_blend = std::stod(p.substr(3));
-            } else if (p.rfind("bt=", 0) == 0) {
-                o.belief_temp = std::stod(p.substr(3));
-            } else if (p.rfind("pool=", 0) == 0) {
-                o.pool = std::stoi(p.substr(5));
-            } else if (p.rfind("belief=", 0) == 0) {
-                o.belief_model = loadBelief(p.substr(7));
-            } else if (p.rfind("sbelief=", 0) == 0) {
-                o.suit_belief_model = loadBelief(p.substr(8));
-            } else if (p.rfind("nbelief=", 0) == 0) {
-                o.nt_belief_model = loadBelief(p.substr(8));
-            } else if (p.rfind("lik=", 0) == 0) {
-                o.fast_lik_weight = std::stod(p.substr(4));
-            } else if (p.rfind("likt=", 0) == 0) {
-                o.fast_lik_temp = std::stod(p.substr(5));
-            } else if (p.rfind("auc=", 0) == 0) {
-                o.auction_model = loadAuction(p.substr(4));
-            } else if (p.rfind("auclik=", 0) == 0) {
-                o.auc_lik_weight = std::stod(p.substr(7));
-            } else if (p.rfind("auclikt=", 0) == 0) {
-                o.auc_lik_temp = std::stod(p.substr(8));
-            } else if (p.rfind("aucprior=", 0) == 0) {
-                o.auc_prior_weight = std::stod(p.substr(9));
-            } else if (p.rfind("auct=", 0) == 0) {
-                o.auc_card_temp = std::stod(p.substr(5));
-            } else if (p.rfind("aucp=", 0) == 0) {
-                o.auc_prefilter = std::max(1, std::stoi(p.substr(5)));
-            } else if (p.rfind("z=", 0) == 0) {
-                o.z = std::stod(p.substr(2));
-            } else if (p == "norace") {
-                o.race = false;
-            } else if (p == "race") {
-                o.race = true;
-            }
-        }
-        return searchAgent(std::move(o));
+        return searchAgent(parseSearchOptions(spec));
     }
 
     throw std::invalid_argument("bridge::makeAgent: unknown agent spec '" + spec + "'");

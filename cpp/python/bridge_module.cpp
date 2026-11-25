@@ -151,6 +151,22 @@ PYBIND11_MODULE(bridge_cpp, m) {
         .def("act", &PyAgent::act)
         .def("reseed", [](PyAgent& a, std::uint64_t seed) { a.rng.seed(seed); });
 
+    // Reusable C++ SearchEvaluator for fair shared-world battles (e.g. sharing BEN bidder.onnx worlds!)
+    struct PySearchOnWorlds {
+        SearchOptions opt;
+        int act(const BridgeGame& g, const std::vector<BridgeGame>& worlds, const std::vector<double>& weights,
+                bool enumerated) const {
+            py::gil_scoped_release rel;
+            return searchCardOnWorlds(g, worlds, weights, opt, enumerated).card;
+        }
+    };
+    py::class_<PySearchOnWorlds>(m, "SearchOnWorlds")
+        .def(py::init([](const std::string& spec) { return PySearchOnWorlds{parseSearchOptions(spec)}; }))
+        .def("act", &PySearchOnWorlds::act, py::arg("game"), py::arg("worlds"), py::arg("weights"),
+             py::arg("enumerated") = false)
+        .def_property_readonly("worlds", [](const PySearchOnWorlds& s) { return s.opt.worlds; })
+        .def_property_readonly("pool", [](const PySearchOnWorlds& s) { return s.opt.pool; });
+
     // Utilities
     m.def("random_game", [](std::uint64_t seed, int strain_filter) {
         return randomBridgeGameFromSeed(seed, BridgeGame::PayoffMode::kDuplicateScore, strain_filter);

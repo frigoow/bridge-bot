@@ -68,6 +68,18 @@ struct SearchResult {
 
 SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19937_64& rng);
 
+/**
+ * Evaluate and choose a card on externally supplied (e.g. shared bidder.onnx) worlds and base
+ * weights, applying our own FastPolicy Bayesian play-likelihood (opt.fast_lik_weight), FastPolicy
+ * playouts / DDS endgame, QGRU blend, and cardbot::raceMoves.
+ */
+SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGame>& worlds,
+                                const std::vector<double>& base_weights, const SearchOptions& opt,
+                                bool enumerated = false);
+
 cardbot::Agent<BridgeGame> searchAgent(SearchOptions opt = {});
+
+/** Parse a `search:...` agent spec into SearchOptions (for external-world evaluation). */
+SearchOptions parseSearchOptions(const std::string& spec);
 
 }  // namespace bridge

@@ -41,6 +41,54 @@ def make_player_factory(spec: str):
 
         return factory
 
+    if spec.startswith("shared_auc+"):
+        # Fair card-play comparison: uses BEN's exact bidder.onnx auction-filtered world sampler
+        # (identical to ben_dds_auc) feeding directly into our C++ SearchOnWorlds engine!
+        inner = spec[len("shared_auc+"):]
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben_nn"):
+                local.ben_nn = BenOnnxPlayer(threads=1)
+                local.search = bridge_cpp.SearchOnWorlds(inner)
+            nn = local.ben_nn
+            srch = local.search
+            w_cnt = srch.worlds
+            pool = max(1, srch.pool)
+            step = [0]
+
+            def act(game):
+                legal = game.legal_actions()
+                if len(legal) == 1:
+                    return legal[0]
+                step[0] += 1
+                c = game.contract()
+                do_auc = c.has_auction() and (nn.bidder is not None)
+                n_draw = w_cnt * pool if do_auc else w_cnt
+                worlds = bridge_cpp.sample_worlds(game, n_draw, seed * 1000003 + step[0])
+                if not worlds:
+                    return legal[0]
+                if do_auc and len(worlds) > w_cnt:
+                    ll = nn.score_worlds_auction(game, worlds)
+                    top_idx = np.argsort(ll)[-w_cnt:]
+                    worlds = [worlds[int(i)] for i in top_idx]
+                    ll_top = ll[top_idx]
+                    mx = float(ll_top.max())
+                    wts = np.exp(np.clip(0.45 * (ll_top - mx), -40.0, 0.0))
+                    wts = (wts / float(wts.sum())).tolist()
+                elif do_auc:
+                    ll = nn.score_worlds_auction(game, worlds)
+                    mx = float(ll.max())
+                    wts = np.exp(np.clip(0.45 * (ll - mx), -40.0, 0.0))
+                    wts = (wts / float(wts.sum())).tolist()
+                else:
+                    wts = [1.0 / len(worlds)] * len(worlds)
+                return srch.act(game, worlds, wts, False)
+
+            return act
+
+        return factory
+
     if spec == "ben_dds_auc" or spec.startswith("ben_dds_auc:"):
         parts = spec.split(":")
         w = int(parts[1]) if len(parts) >= 2 else 16
