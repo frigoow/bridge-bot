@@ -213,6 +213,19 @@ Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (eliminating bid
 | **`shared_auc+search:16:pool=6:dds13:rex13`** *(matched 16w)* vs **`ben_dds_auc:16:6`** | 1000 | **−0.10 ± 0.24** | **−0.027 ± 0.028** | 21.5% / 53.6% / 24.9% | **105.47** | 111.05 |
 | **`shared_auc+search:32:pool=6:dds13:rex13`** *(matched 32w)* vs **`ben_dds_auc:32:6`** | 1000 | **−0.17 ± 0.23** | **−0.021 ± 0.026** | 19.7% / 56.7% / 23.6% | **201.29** | 213.91 |
 
+**v2 — 1M BEN-Bid Trump Pool + 12M Low-LR DMC (`suit_auc_dmc20m`, zero LR shock) + 24k ExIt Gen 2 (`suit_auc_exit2`, wider `512→256` `FastPolicy`, 2026-11-26):**
+- Trained on **1,000,000 BEN-bid Trump deals (`data/ben_suit_train_1m.bin`)** with `lr=3.5e-5 → 5.0e-6` (`suit_auc_dmc20m_best_ben.bin`, `belief_ce=0.4085`!) followed by **24,000-deal ExIt Gen 2** (~985k search-labeled states, `worlds=16, dds=10, rex=10`, `q_top1=61.5%`, `fast_top1=51.7%`).
+- **First-ever standalone Trump neural wins over full auction-aware `ben_nn_auc` on 1,000 unseen pairs** — BOTH `suit_auc_exit2_q` (**`+0.23 ± 0.27 IMPs/bd`**) AND wider `512→256` `suit_auc_exit2_fast` (**`+0.13 ± 0.27 IMPs/bd`** at **2.4× faster** speed)!
+
+| A vs B (1,000 strictly unseen BEN-bid Trump pairs, `seed=1000`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| `qgru:suit_auc_dmc20m_best_ben.bin` *(20M DMC, zero search)* vs `ben_nn_auc` | 1000 | −0.21 ± 0.30 | −0.151 ± 0.036 | 22.8% / 35.0% / 42.2% | 6.13 | 5.77 |
+| **`qgru:suit_auc_exit2_q.bin`** *(ExIt2 QGRU, zero search!)* vs **`ben_nn_auc`** | 1000 | **+0.23 ± 0.27** | **+0.017 ± 0.035** | **28.9% / 43.1% / 28.0%** | 5.99 | 5.63 |
+| **`fast:suit_auc_exit2_fast.bin`** *(512→256 FastPolicy, zero search!)* vs **`ben_nn_auc`** | 1000 | **+0.13 ± 0.27** | **+0.017 ± 0.032** | **28.4% / 44.5% / 27.1%** | **1.81** | 4.36 |
+| `shared_auc+search:64:pool=6:dds8:rex8` *(NO trick-1 DDS, `dmc20m` Q, post-`lik=0.25`)* vs `ben_dds_auc:16:6` | 1000 | −0.32 ± 0.23 | −0.042 ± 0.029 | 21.3% / 51.1% / 27.6% | 187.92 | 147.21 |
+| `shared_auc+search:16:pool=6:dds13:rex13` *(matched 16w, `dmc20m` Q, post-`lik=0.25`)* vs `ben_dds_auc:16:6` | 1000 | −0.18 ± 0.23 | −0.038 ± 0.027 | 20.4% / 54.0% / 25.6% | **113.37** | 121.15 |
+| `shared_auc+search:32:pool=6:dds13:rex13` *(matched 32w, `dmc20m` Q, post-`lik=0.25`)* vs `ben_dds_auc:32:6` | 1000 | −0.16 ± 0.23 | −0.024 ± 0.027 | 21.0% / 55.1% / 23.9% | **211.79** | 225.84 |
+
 
 
 
