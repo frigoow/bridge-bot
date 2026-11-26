@@ -240,6 +240,17 @@ Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (eliminating bid
 | **`shared_auc+16w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet bw=0.25, pb=0.04`)** vs **`ben_dds_auc:16:6`** | **1000** | **+0.02 ± 0.23** | **+0.019 ± 0.027** | **24.6% / 54.4% / 21.0%** | **105.10** | 110.89 |
 | `shared_auc+16w:pool=6:dds13:rex13` (`bw=0.20, pb=0.08`) vs `ben_dds_auc:16:6` | 1000 | −0.09 ± 0.23 | +0.002 ± 0.026 | 22.9% / 54.5% / 22.6% | **105.58** | 111.27 |
 | **`shared_auc+32w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet bw=0.25, pb=0.04`)** vs **`ben_dds_auc:32:6`** | **1000** | **+0.11 ± 0.21** | **+0.025 ± 0.025** | **23.3% / 58.0% / 18.7%** | **201.86** | 215.23 |
+| *(Real unseen BBO Daylongs, Suit)* `shared_auc+16w:pool=6` Two-Punch vs `ben_dds_auc:16:6` | 216 | **+0.13 ± 0.57** | **+0.028 ± 0.058** | 20.8% / 59.7% / 19.4% | **117.09** | 120.44 |
+| *(Real unseen BBO Daylongs, Suit)* `shared_auc+32w:pool=6` Two-Punch vs `ben_dds_auc:32:6` | 216 | −0.17 ± 0.55 | −0.002 ± 0.058 | 19.4% / 56.9% / 23.6% | **221.94** | 225.35 |
+
+**v4 — Dedicated `384→192` GRU `BeliefNet v2` (`suit_auc_belief_v2_best.bin`, 2026-11-26, commit `549ef96`):**
+- Trained a dedicated wider `585`-dim GRU `BeliefNet` (`384→192`, `train_belief.py`) on **2,000,000 BEN-bid Trump deals** played by our strong `suit_auc_exit2_fast + suit_auc_lead_fast` actors (6× plain-suit perms).
+- On 100 strictly unseen BEN-bid Suit deals (800 states), `BeliefNet v2` (`bw=0.25`) boosted true-world rank from `86.38%` (`bidder.onnx` alone) → **`91.29%`** and top-16 inclusion from `76.12%` → **`85.12%` (+9.00% over BEN!)** in `< 0.5 ms`.
+
+| A vs B (1,000 strictly unseen BEN-bid Trump pairs, `seed=1000`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| **`shared_auc+16w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet v2 bw=0.25, pb=0.04`)** vs **`ben_dds_auc:16:6`** | **1000** | **+0.05 ± 0.22** | **+0.010 ± 0.027** | **23.8% / 54.8% / 21.4%** | **105.52** | 110.74 |
+| **`shared_auc+32w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet v2 bw=0.25, pb=0.04`)** vs **`ben_dds_auc:32:6`** | **1000** | **+0.13 ± 0.20** | **+0.035 ± 0.025** | **23.2% / 58.4% / 18.4%** | **201.81** | 214.62 |
 
 
 
