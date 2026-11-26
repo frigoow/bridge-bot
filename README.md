@@ -57,6 +57,17 @@ Built purely via the `cardbot-framework` recipe (`ExIt` warm-start → `16M`-dea
 | **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | NT | **+0.66 ± 0.24** | **+0.127 ± 0.049** | **39.2% / 35.5% / 25.3%** | 108.4 vs 87.8 ms |
 | **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | **All** | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 102.0 vs 89.9 ms |
 
+### Fair Auction-Aware Card-Play Showdown (Shared BEN `bidder.onnx` + `bidinfo.onnx`, 1,000 Unseen BEN-Bid Trump Pairs)
+
+Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` and identical `W * 6` candidate world budgets, isolating 100% pure card play on 1,000 strictly unseen BEN-bid Trump deals:
+
+| Our Bot vs Full Auction-Aware BEN (1,000 mirrored pairs) | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
+|---|---:|---:|---:|---:|
+| **Standalone `suit_auc_exit2_q` (`QGRU`, 585-dim, zero search!)** vs **`ben_nn_auc`** | **+0.23 ± 0.27** | **+0.017 ± 0.035** | **28.9% / 43.1% / 28.0%** | 6.0 vs 5.6 ms |
+| **Standalone `suit_auc_exit2_fast` (`512→256`, zero search!)** vs **`ben_nn_auc`** | **+0.13 ± 0.27** | **+0.017 ± 0.032** | **28.4% / 44.5% / 27.1%** | **1.8** vs 4.4 ms |
+| **Matched `16w:pool=6` (`slead + exit2_fast + BeliefNet bw=0.25`)** vs **`ben_dds_auc:16:6`** | **+0.02 ± 0.23** | **+0.019 ± 0.027** | **24.6% / 54.4% / 21.0%** | **105.1** vs 110.9 ms |
+| **Matched `32w:pool=6` (`slead + exit2_fast + BeliefNet bw=0.25`)** vs **`ben_dds_auc:32:6`** | **+0.11 ± 0.21** | **+0.025 ± 0.025** | **23.3% / 58.0% / 18.7%** | **201.9** vs 215.2 ms |
+
 Full progression, standalone network tables, and ablations are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Established Opponents & Baseline Ladder

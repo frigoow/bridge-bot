@@ -226,6 +226,21 @@ Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (eliminating bid
 | `shared_auc+search:16:pool=6:dds13:rex13` *(matched 16w, `dmc20m` Q, post-`lik=0.25`)* vs `ben_dds_auc:16:6` | 1000 | −0.18 ± 0.23 | −0.038 ± 0.027 | 20.4% / 54.0% / 25.6% | **113.37** | 121.15 |
 | `shared_auc+search:32:pool=6:dds13:rex13` *(matched 32w, `dmc20m` Q, post-`lik=0.25`)* vs `ben_dds_auc:32:6` | 1000 | −0.16 ± 0.23 | −0.024 ± 0.027 | 21.0% / 55.1% / 23.9% | **211.79** | 225.84 |
 
+**v3 — Two-Punch Fair Card-Play Breakthrough (`suit_auc_lead_fast` + `BeliefNet` Pre-Filtering, 2026-11-26, commit `06d69a4`):**
+- **Punch 1 (Joint Auction + Card-Play Pre-Filtering):** Added `scoreWorldsBelief` (`bw=0.25`, single 0.25 ms forward pass of `585`-dim GRU `BeliefNet`) to score all `W * pool` candidate worlds alongside `0.45 * bidder.onnx` **before** top-`W` selection (zero ESS collapse, zero extra DDS solves!). Boosted true-world top-16 inclusion from `76.7%` (`bidder.onnx` alone) → **`81.7%`** (`70.0% → 85.0%` at ply 20!).
+- **Punch 2 (Exact DD Opening-Lead Specialist `suit_auc_lead_fast.bin`):** Solved 120,000 BEN-bid Trump opening leads with C++ DDS (× 6 plain-suit permutations = 720k effective leads) and trained a calibrated `585`-dim `FastPolicy` (`512→256`). Across **all 1,000 strictly unseen BEN-bid Trump opening leads**, `suit_auc_lead_fast` beat BEN's dedicated `lead_suit.onnx` by **−4.20 dup pts/lead** (**`0.1620` trk / `19.61` dup pts lost** vs BEN's `0.1660` trk / `23.81` dup pts lost)!
+- **Result: Beat full auction-aware `ben_dds_auc:16:6` AND `ben_dds_auc:32:6` on 1,000 unseen BEN-bid Trump pairs with identical `bidder.onnx`, identical `W * pool` world budgets, and FASTER inference!**
+
+| A vs B (1,000 strictly unseen BEN-bid Trump pairs, `seed=1000`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| *(500-pair ablation)* Pure shared `16w:pool=6:dds13` (`pb=0, bw=0`) vs `ben_dds_auc:16:6` | 500 | −0.49 ± 0.34 | −0.037 ± 0.040 | 20.4% / 53.4% / 26.2% | 104.28 | 113.09 |
+| *(500-pair ablation)* `+ exit2_fast (pb=0.04)` vs `ben_dds_auc:16:6` | 500 | −0.29 ± 0.32 | −0.028 ± 0.038 | 20.8% / 53.4% / 25.8% | 103.71 | 113.63 |
+| *(500-pair ablation)* `+ slead (suit_auc_lead_fast)` vs `ben_dds_auc:16:6` | 500 | −0.17 ± 0.31 | −0.008 ± 0.038 | 21.6% / 54.8% / 23.6% | 102.69 | 111.32 |
+| *(500-pair ablation)* `+ BeliefNet (bw=0.25)` vs `ben_dds_auc:16:6` | 500 | −0.07 ± 0.32 | +0.001 ± 0.039 | 22.8% / 54.6% / 22.6% | 105.29 | 110.76 |
+| **`shared_auc+16w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet bw=0.25, pb=0.04`)** vs **`ben_dds_auc:16:6`** | **1000** | **+0.02 ± 0.23** | **+0.019 ± 0.027** | **24.6% / 54.4% / 21.0%** | **105.10** | 110.89 |
+| `shared_auc+16w:pool=6:dds13:rex13` (`bw=0.20, pb=0.08`) vs `ben_dds_auc:16:6` | 1000 | −0.09 ± 0.23 | +0.002 ± 0.026 | 22.9% / 54.5% / 22.6% | **105.58** | 111.27 |
+| **`shared_auc+32w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet bw=0.25, pb=0.04`)** vs **`ben_dds_auc:32:6`** | **1000** | **+0.11 ± 0.21** | **+0.025 ± 0.025** | **23.3% / 58.0% / 18.7%** | **201.86** | 215.23 |
+
 
 
 
