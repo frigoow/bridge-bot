@@ -176,13 +176,25 @@ PYBIND11_MODULE(bridge_cpp, m) {
             py::gil_scoped_release rel;
             return searchCardOnWorlds(g, worlds, weights, opt, enumerated).card;
         }
+        std::vector<double> score_worlds_belief(const BridgeGame& g, const std::vector<BridgeGame>& worlds) const {
+            py::gil_scoped_release rel;
+            return scoreWorldsBelief(g, worlds, opt);
+        }
+        std::vector<double> score_worlds_fast_lik(const BridgeGame& g, const std::vector<BridgeGame>& worlds) const {
+            py::gil_scoped_release rel;
+            return scoreWorldsFastLik(g, worlds, opt);
+        }
     };
     py::class_<PySearchOnWorlds>(m, "SearchOnWorlds")
         .def(py::init([](const std::string& spec) { return PySearchOnWorlds{parseSearchOptions(spec)}; }))
         .def("act", &PySearchOnWorlds::act, py::arg("game"), py::arg("worlds"), py::arg("weights"),
              py::arg("enumerated") = false)
+        .def("score_worlds_belief", &PySearchOnWorlds::score_worlds_belief, py::arg("game"), py::arg("worlds"))
+        .def("score_worlds_fast_lik", &PySearchOnWorlds::score_worlds_fast_lik, py::arg("game"), py::arg("worlds"))
         .def_property_readonly("worlds", [](const PySearchOnWorlds& s) { return s.opt.worlds; })
-        .def_property_readonly("pool", [](const PySearchOnWorlds& s) { return s.opt.pool; });
+        .def_property_readonly("pool", [](const PySearchOnWorlds& s) { return s.opt.pool; })
+        .def_property_readonly("belief_weight", [](const PySearchOnWorlds& s) { return s.opt.belief_weight; })
+        .def_property_readonly("pre_lik_weight", [](const PySearchOnWorlds& s) { return s.opt.pre_lik_weight; });
 
     // Utilities
     m.def("random_game", [](std::uint64_t seed, int strain_filter) {
@@ -471,4 +483,80 @@ PYBIND11_MODULE(bridge_cpp, m) {
           py::arg("eps") = 0.04, py::arg("seed") = 1, py::arg("threads") = 16,
           py::arg("strain_filter") = -1, py::arg("reward_scale") = 500.0f,
           py::arg("use_deal_pool") = false, py::arg("state_dim") = kBridgeStateDim);
+
+    // Multi-threaded C++ exact DD opening-lead dataset collector on BEN-bid deals (ply == 0).
+    // Returns state [N, state_dim], legal_mask [N, 52], dd_score [N, 52] (defender dup score / 500),
+    // and dd_tricks [N, 52] (exact defender tricks) indexed by canonical card slot.
+    m.def("collect_lead_dataset",
+          [](const std::string& ben_deals_path, int num_deals, int offset, int threads, int state_dim) {
+              if (state_dim != kBridgeStateDim && state_dim != kBridgeAucStateDim) {
+                  throw std::invalid_argument("collect_lead_dataset: state_dim must be 570 or 585");
+              }
+              BenDealPool pool;
+              const int max_load = (num_deals > 0) ? (offset + num_deals) : 0;
+              if (!pool.load(ben_deals_path, max_load)) {
+                  throw std::runtime_error("collect_lead_dataset: failed to load " + ben_deals_path);
+              }
+              const int start = std::max(0, offset);
+              const int end = (num_deals > 0) ? std::min(int(pool.deals.size()), start + num_deals)
+                                              : int(pool.deals.size());
+              const int n = std::max(0, end - start);
+
+              py::array_t<float> state({py::ssize_t(n), py::ssize_t(state_dim)});
+              py::array_t<float> legal_mask({py::ssize_t(n), py::ssize_t(kCards)});
+              py::array_t<float> dd_score({py::ssize_t(n), py::ssize_t(kCards)});
+              py::array_t<float> dd_tricks({py::ssize_t(n), py::ssize_t(kCards)});
+              std::memset(legal_mask.mutable_data(), 0, std::size_t(n) * kCards * sizeof(float));
+              std::memset(dd_score.mutable_data(), 0, std::size_t(n) * kCards * sizeof(float));
+              std::memset(dd_tricks.mutable_data(), 0, std::size_t(n) * kCards * sizeof(float));
+
+              float* st_ptr = state.mutable_data();
+              float* lm_ptr = legal_mask.mutable_data();
+              float* ds_ptr = dd_score.mutable_data();
+              float* dt_ptr = dd_tricks.mutable_data();
+
+              {
+                  py::gil_scoped_release rel;
+                  const int nt = std::max(1, std::min(threads, std::max(1, n)));
+                  std::atomic<int> next_idx{0};
+                  std::vector<std::thread> workers;
+                  workers.reserve(std::size_t(nt));
+                  for (int ti = 0; ti < nt; ++ti) {
+                      workers.emplace_back([&]() {
+                          while (true) {
+                              const int i = next_idx.fetch_add(1, std::memory_order_relaxed);
+                              if (i >= n) break;
+                              const BridgeGame g = pool.deals[std::size_t(start + i)].toGame(
+                                  BridgeGame::PayoffMode::kDuplicateScore);
+                              const int seat = g.toMove();
+                              const int strain = g.contract().strain;
+                              encodeBridgeStateForDim(g, seat, state_dim,
+                                                      st_ptr + std::size_t(i) * std::size_t(state_dim), nullptr);
+                              const auto scored = ddsSolveMoves(g);
+                              float* lm_row = lm_ptr + std::size_t(i) * kCards;
+                              float* ds_row = ds_ptr + std::size_t(i) * kCards;
+                              float* dt_row = dt_ptr + std::size_t(i) * kCards;
+                              for (const auto& ms : scored) {
+                                  const int cc = canonCard(ms.card, strain);
+                                  lm_row[cc] = 1.0f;
+                                  // Defender is on lead at ply 0: decl tricks = 13 - ms.tricks
+                                  const int def_sc = -contractScore(g.contract(), 13 - ms.tricks);
+                                  ds_row[cc] = float(def_sc) / 500.0f;
+                                  dt_row[cc] = float(ms.tricks);
+                              }
+                          }
+                      });
+                  }
+                  for (auto& w : workers) w.join();
+              }
+
+              py::dict out;
+              out["state"] = state;
+              out["legal_mask"] = legal_mask;
+              out["dd_score"] = dd_score;
+              out["dd_tricks"] = dd_tricks;
+              return out;
+          },
+          py::arg("ben_deals_path"), py::arg("num_deals") = 50000, py::arg("offset") = 0,
+          py::arg("threads") = 16, py::arg("state_dim") = kBridgeAucStateDim);
 }

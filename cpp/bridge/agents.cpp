@@ -94,6 +94,10 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.suit_fast_policy = loadFast(p.substr(6));
         } else if (p.rfind("nfast=", 0) == 0) {
             o.nt_fast_policy = loadFast(p.substr(6));
+        } else if (p.rfind("slead=", 0) == 0) {
+            o.suit_lead_policy = loadFast(p.substr(6));
+        } else if (p.rfind("nlead=", 0) == 0) {
+            o.nt_lead_policy = loadFast(p.substr(6));
         } else if (p.rfind("q=", 0) == 0) {
             o.q_model = loadQGru(p.substr(2));
         } else if (p.rfind("sq=", 0) == 0) {
@@ -106,6 +110,8 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.policy_blend = std::stod(p.substr(3));
         } else if (p.rfind("bt=", 0) == 0) {
             o.belief_temp = std::stod(p.substr(3));
+        } else if (p.rfind("bw=", 0) == 0) {
+            o.belief_weight = std::stod(p.substr(3));
         } else if (p.rfind("pool=", 0) == 0) {
             o.pool = std::stoi(p.substr(5));
         } else if (p.rfind("belief=", 0) == 0) {
@@ -116,6 +122,8 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.nt_belief_model = loadBelief(p.substr(8));
         } else if (p.rfind("lik=", 0) == 0) {
             o.fast_lik_weight = std::stod(p.substr(4));
+        } else if (p.rfind("prelik=", 0) == 0) {
+            o.pre_lik_weight = std::stod(p.substr(7));
         } else if (p.rfind("likt=", 0) == 0) {
             o.fast_lik_temp = std::stod(p.substr(5));
         } else if (p.rfind("auc=", 0) == 0) {

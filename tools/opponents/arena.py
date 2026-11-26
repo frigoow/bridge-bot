@@ -87,18 +87,28 @@ def make_player_factory(spec: str):
                 worlds = bridge_cpp.sample_worlds(game, n_draw, seed * 1000003 + step[0])
                 if not worlds:
                     return legal[0]
-                if do_auc and len(worlds) > w_cnt:
-                    ll = nn.score_worlds_auction(game, worlds)
-                    top_idx = np.argsort(ll)[-w_cnt:]
-                    worlds = [worlds[int(i)] for i in top_idx]
-                    ll_top = ll[top_idx]
+                if do_auc:
+                    ll_tot = 0.45 * nn.score_worlds_auction(game, worlds)
+                else:
+                    ll_tot = np.zeros(len(worlds), dtype=np.float64)
+                if game.n_plies() > 0:
+                    if srch.belief_weight > 0.0:
+                        ll_tot = ll_tot + srch.belief_weight * np.asarray(
+                            srch.score_worlds_belief(game, worlds), dtype=np.float64
+                        )
+                    if srch.pre_lik_weight > 0.0:
+                        ll_tot = ll_tot + srch.pre_lik_weight * np.asarray(
+                            srch.score_worlds_fast_lik(game, worlds), dtype=np.float64
+                        )
+                if do_auc or (game.n_plies() > 0 and (srch.belief_weight > 0.0 or srch.pre_lik_weight > 0.0)):
+                    if len(worlds) > w_cnt:
+                        top_idx = np.argsort(ll_tot)[-w_cnt:]
+                        worlds = [worlds[int(i)] for i in top_idx]
+                        ll_top = ll_tot[top_idx]
+                    else:
+                        ll_top = ll_tot
                     mx = float(ll_top.max())
-                    wts = np.exp(np.clip(0.45 * (ll_top - mx), -40.0, 0.0))
-                    wts = (wts / float(wts.sum())).tolist()
-                elif do_auc:
-                    ll = nn.score_worlds_auction(game, worlds)
-                    mx = float(ll.max())
-                    wts = np.exp(np.clip(0.45 * (ll - mx), -40.0, 0.0))
+                    wts = np.exp(np.clip(ll_top - mx, -40.0, 0.0))
                     wts = (wts / float(wts.sum())).tolist()
                 else:
                     wts = [1.0 / len(worlds)] * len(worlds)

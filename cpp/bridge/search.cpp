@@ -22,6 +22,14 @@ const cardbot::FastPolicyModel* pickFast(const SearchOptions& opt, int strain) {
     return nullptr;
 }
 
+const cardbot::FastPolicyModel* pickLeadFast(const SearchOptions& opt, int strain, int n_plies) {
+    if (n_plies == 0) {
+        if (strain == kNT && opt.nt_lead_policy && opt.nt_lead_policy->loaded()) return opt.nt_lead_policy.get();
+        if (strain != kNT && opt.suit_lead_policy && opt.suit_lead_policy->loaded()) return opt.suit_lead_policy.get();
+    }
+    return pickFast(opt, strain);
+}
+
 const cardbot::QGruModel* pickQ(const SearchOptions& opt, int strain) {
     if (strain == kNT && opt.nt_q_model && opt.nt_q_model->loaded()) return opt.nt_q_model.get();
     if (strain != kNT && opt.suit_q_model && opt.suit_q_model->loaded()) return opt.suit_q_model.get();
@@ -231,6 +239,7 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     const int seat = g.toMove();
     const int strain = g.contract().strain;
     const auto* fast = pickFast(opt, strain);
+    const auto* root_fast = pickLeadFast(opt, strain, g.nPlies());
     const auto* qnet = pickQ(opt, strain);
     const auto* bnet = pickBelief(opt, strain);
 
@@ -238,12 +247,12 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     std::vector<double> q_vals;
     std::vector<double> fast_probs;
     int prior = legal[0];
-    if (fast && (opt.policy_blend > 0.0 || !qnet)) {
+    if (root_fast && (opt.policy_blend > 0.0 || !qnet)) {
         thread_local std::vector<float> fstate(kBridgeAucStateDim), flogits;
-        fstate.resize(std::size_t(fast->stateDim()));
-        flogits.resize(std::size_t(fast->outDim()));
-        encodeBridgeStateForDim(g, seat, fast->stateDim(), fstate.data(), nullptr);
-        fast->forward(fstate.data(), flogits.data());
+        fstate.resize(std::size_t(root_fast->stateDim()));
+        flogits.resize(std::size_t(root_fast->outDim()));
+        encodeBridgeStateForDim(g, seat, root_fast->stateDim(), fstate.data(), nullptr);
+        root_fast->forward(fstate.data(), flogits.data());
         fast_probs.resize(legal.size());
         double mx = -1e30;
         std::size_t best_f = 0;
@@ -451,17 +460,18 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     const int seat = g.toMove();
     const int strain = g.contract().strain;
     const auto* fast = pickFast(opt, strain);
+    const auto* root_fast = pickLeadFast(opt, strain, g.nPlies());
     const auto* qnet = pickQ(opt, strain);
 
     std::vector<double> q_vals;
     std::vector<double> fast_probs;
     int prior = legal[0];
-    if (fast && (opt.policy_blend > 0.0 || !qnet)) {
+    if (root_fast && (opt.policy_blend > 0.0 || !qnet)) {
         thread_local std::vector<float> fstate(kBridgeAucStateDim), flogits;
-        fstate.resize(std::size_t(fast->stateDim()));
-        flogits.resize(std::size_t(fast->outDim()));
-        encodeBridgeStateForDim(g, seat, fast->stateDim(), fstate.data(), nullptr);
-        fast->forward(fstate.data(), flogits.data());
+        fstate.resize(std::size_t(root_fast->stateDim()));
+        flogits.resize(std::size_t(root_fast->outDim()));
+        encodeBridgeStateForDim(g, seat, root_fast->stateDim(), fstate.data(), nullptr);
+        root_fast->forward(fstate.data(), flogits.data());
         fast_probs.resize(legal.size());
         double mx = -1e30;
         std::size_t best_f = 0;
@@ -636,6 +646,124 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     out.worlds = rr.worlds;
     out.values = rr.values;
     return out;
+}
+
+std::vector<double> scoreWorldsBelief(const BridgeGame& g, const std::vector<BridgeGame>& worlds,
+                                      const SearchOptions& opt) {
+    const std::size_t nw = worlds.size();
+    std::vector<double> ll(nw, 0.0);
+    if (nw == 0) return ll;
+    const int seat = g.toMove();
+    const int strain = g.contract().strain;
+    const auto* bnet = pickBelief(opt, strain);
+    if (!bnet || bnet->numCards() != kCards || bnet->numSeats() != 3) return ll;
+
+    const Observation obs = g.observe(seat);
+    const BridgeSampler sampler(obs);
+    const auto& hseats = sampler.hiddenSeats();
+    const int nh = sampler.numHiddenSeats();
+    if (nh <= 1) return ll;
+    const auto m_raw = sampler.cardMarginals();
+
+    std::vector<float> state(std::size_t(bnet->stateDim()));
+    std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
+    const int np = encodeBridgeStateForDim(g, seat, bnet->stateDim(), state.data(), hist.data());
+    std::vector<float> marg_in(kCards * 3, 0.0f);
+    for (int c = 0; c < kCards; ++c) {
+        const int cc = canonCard(c, strain);
+        for (int k = 0; k < 3; ++k) marg_in[std::size_t(cc * 3 + k)] = float(m_raw[std::size_t(c)][std::size_t(k)]);
+    }
+    std::vector<float> probs(kCards * 3, 0.0f);
+    bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(opt.belief_temp));
+
+    // Precompute log P(card c -> hidden slot k) for all 52 cards (uncertain cards only)
+    std::array<std::array<double, 3>, kCards> logp{};
+    std::array<bool, kCards> uncertain{};
+    for (int c = 0; c < kCards; ++c) {
+        int n_pos = 0;
+        for (int k = 0; k < nh; ++k) {
+            if (m_raw[std::size_t(c)][std::size_t(k)] > 0.0) ++n_pos;
+        }
+        uncertain[std::size_t(c)] = (n_pos >= 2);
+        if (uncertain[std::size_t(c)]) {
+            const int cc = canonCard(c, strain);
+            for (int k = 0; k < nh; ++k) {
+                logp[std::size_t(c)][std::size_t(k)] = std::log(std::max(double(probs[std::size_t(cc * 3 + k)]), 1e-4));
+            }
+        }
+    }
+
+    for (std::size_t w = 0; w < nw; ++w) {
+        double acc = 0.0;
+        for (int k = 0; k < nh; ++k) {
+            Mask hm = worlds[w].hand(hseats[std::size_t(k)]);
+            for (Mask m = hm; m; m &= m - 1) {
+                const int c = lowestCard(m);
+                if (uncertain[std::size_t(c)]) acc += logp[std::size_t(c)][std::size_t(k)];
+            }
+        }
+        ll[w] = acc;
+    }
+    return ll;
+}
+
+std::vector<double> scoreWorldsFastLik(const BridgeGame& g, const std::vector<BridgeGame>& worlds,
+                                       const SearchOptions& opt) {
+    const std::size_t nw = worlds.size();
+    std::vector<double> pll(nw, 0.0);
+    if (nw == 0 || g.nPlies() == 0) return pll;
+    const int seat = g.toMove();
+    const int strain = g.contract().strain;
+    const auto* fast = pickFast(opt, strain);
+    if (!fast) return pll;
+
+    const Observation obs = g.observe(seat);
+    const BridgeSampler sampler(obs);
+    const auto& hseats = sampler.hiddenSeats();
+    const int nh = sampler.numHiddenSeats();
+    auto is_hidden = [&](int s) {
+        for (int k = 0; k < nh; ++k)
+            if (hseats[std::size_t(k)] == s) return true;
+        return false;
+    };
+    const auto& hist = g.history();
+    const int n_plies = g.nPlies();
+    const double inv_t = 1.0 / std::max(opt.fast_lik_temp, 0.05);
+    thread_local std::vector<float> pstate(kBridgeAucStateDim), plogits;
+
+    for (std::size_t w = 0; w < nw; ++w) {
+        BridgeGame sim(worlds[w].initialHands(), g.contract(), g.payoffMode());
+        double ll = 0.0;
+        for (int p = 0; p < n_plies; ++p) {
+            const int ps = int(hist[std::size_t(p)].seat);
+            const int played = int(hist[std::size_t(p)].card);
+            if (is_hidden(ps)) {
+                const Mask lm = sim.legalMask();
+                if (lm & (lm - 1)) {
+                    const auto* pf = (p == 0) ? pickLeadFast(opt, strain, 0) : fast;
+                    pstate.resize(std::size_t(pf->stateDim()));
+                    plogits.resize(std::size_t(pf->outDim()));
+                    encodeBridgeStateForDim(sim, ps, pf->stateDim(), pstate.data(), nullptr);
+                    pf->forward(pstate.data(), plogits.data());
+                    double mx = -1e30;
+                    for (Mask m = lm; m; m &= m - 1) {
+                        const double v = double(plogits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                        if (v > mx) mx = v;
+                    }
+                    double sum_e = 0.0;
+                    for (Mask m = lm; m; m &= m - 1) {
+                        const double v = double(plogits[std::size_t(canonCard(lowestCard(m), strain))]) * inv_t;
+                        sum_e += std::exp(v - mx);
+                    }
+                    const double vp = double(plogits[std::size_t(canonCard(played, strain))]) * inv_t;
+                    ll += (vp - mx - std::log(std::max(sum_e, 1e-12)));
+                }
+            }
+            sim.apply(played);
+        }
+        pll[w] = ll;
+    }
+    return pll;
 }
 
 cardbot::Agent<BridgeGame> searchAgent(SearchOptions opt) {
