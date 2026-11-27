@@ -10,7 +10,7 @@ Example:
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import math
 import sys
 import threading
@@ -243,15 +243,27 @@ def _load_games(deals: int, seed: int, pbn: str | None, strain: int, ben_deals_b
             for i in range(deals)]
 
 
-def _play_slice_worker(args):
-    wid, n_workers, spec_a, spec_b, deals, seed, pbn, strain, dd_bench, ben_deals_bin = args
-    games = _load_games(deals, seed, pbn, strain, ben_deals_bin)
-    fac_a = make_player_factory(spec_a)
-    fac_b = make_player_factory(spec_b)
+_MP_CTX: dict = {}
+
+
+def _mp_worker_init(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None,
+                    strain: int, dd_bench: bool, ben_deals_bin: str | None):
+    _MP_CTX["games"] = _load_games(deals, seed, pbn, strain, ben_deals_bin)
+    _MP_CTX["fac_a"] = make_player_factory(spec_a)
+    _MP_CTX["fac_b"] = make_player_factory(spec_b)
+    _MP_CTX["seed"] = seed
+    _MP_CTX["dd_bench"] = dd_bench
+
+
+def _mp_play_chunk(indices: list[int]):
+    games = _MP_CTX["games"]
+    fac_a = _MP_CTX["fac_a"]
+    fac_b = _MP_CTX["fac_b"]
+    seed = _MP_CTX["seed"]
+    dd_bench = _MP_CTX["dd_bench"]
     out = []
-    for i, base in enumerate(games):
-        if i % n_workers != wid:
-            continue
+    for i in indices:
+        base = games[i]
         dd_decl = bridge_cpp.dds_total_declarer_tricks(base) if dd_bench else -1
         score_a = [0.0, 0.0]
         trick_a = [0.0, 0.0]
@@ -296,14 +308,38 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
     wall0 = time.perf_counter()
     use_mp = ("ben_full" in spec_a or "ben_full" in spec_b) and threads > 1
     if use_mp:
-        nt = max(1, threads)
-        tasks = [
-            (wid, nt, spec_a, spec_b, deals, seed, pbn, strain, dd_bench, ben_deals_bin)
-            for wid in range(nt)
-        ]
-        with ProcessPoolExecutor(max_workers=nt) as ex:
-            chunks = list(ex.map(_play_slice_worker, tasks))
-        indexed = [pair for ch in chunks for pair in ch]
+        n_total = len(_load_games(deals, seed, pbn, strain, ben_deals_bin))
+        nt = max(1, min(threads, n_total))
+        chunk_sz = 4
+        chunks = [list(range(s, min(s + chunk_sz, n_total))) for s in range(0, n_total, chunk_sz)]
+        indexed = []
+        next_log = min(24, n_total)
+        with ProcessPoolExecutor(
+            max_workers=nt,
+            initializer=_mp_worker_init,
+            initargs=(spec_a, spec_b, deals, seed, pbn, strain, dd_bench, ben_deals_bin),
+        ) as ex:
+            futs = [ex.submit(_mp_play_chunk, ch) for ch in chunks]
+            for fut in as_completed(futs):
+                indexed.extend(fut.result())
+                done = len(indexed)
+                if done >= next_log or done == n_total:
+                    next_log = done + 24
+                    el = time.perf_counter() - wall0
+                    eta = el * (n_total - done) / max(done, 1)
+                    imps_cur = np.array([r[1][0] for r in indexed])
+                    tr_cur = np.array([r[1][1] for r in indexed])
+                    ci_cur = 1.96 * float(imps_cur.std(ddof=1)) / math.sqrt(done) if done > 1 else 0.0
+                    ta_c = sum(r[1][4] for r in indexed)
+                    tb_c = sum(r[1][5] for r in indexed)
+                    ma_c = sum(r[1][6] for r in indexed)
+                    mb_c = sum(r[1][7] for r in indexed)
+                    print(
+                        f"  [{done:4d}/{n_total}] IMP={imps_cur.mean():+.3f} +- {ci_cur:.3f} | "
+                        f"trk={tr_cur.mean():+.3f} | A={1e3*ta_c/max(1,ma_c):.0f}ms B={1e3*tb_c/max(1,mb_c):.0f}ms | "
+                        f"el={el/60:.1f}m eta={eta/60:.1f}m",
+                        flush=True,
+                    )
         indexed.sort(key=lambda x: x[0])
         results = [r for _, r in indexed]
     else:

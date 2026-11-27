@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies (CPU PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install "pybind11>=3.0" numpy pytest onnxruntime scipy
+          pip install --no-build-isolation -e cardbot-framework/python
+
+      - name: Configure & build C++20 engine + bridge_cpp
+        run: |
+          cmake -B build -S cpp -DCMAKE_BUILD_TYPE=Release -DBRIDGE_PYTHON=ON -DBRIDGE_NATIVE=OFF \
+            -DPython_EXECUTABLE="$(which python)" \
+            -Dpybind11_DIR="$(python -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+          cmake --build build -j "$(nproc)"
+
+      - name: Run C++ unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run Python parity tests
+        run: pytest python/tests -v

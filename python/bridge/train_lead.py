@@ -1,4 +1,9 @@
-"""Exact Double-Dummy Opening-Lead FastPolicy trainer on BEN-bid deals (585-dim, 6x/24x suit-perm).
+"""[Ablation Script] Exact Double-Dummy Opening-Lead FastPolicy trainer on BEN-bid deals (585-dim, 6x/24x suit-perm).
+
+Note: Kept for ablation reproducibility (see docs/BENCHMARKS.md §5, §7, §10).
+In our 1,000-pair component ablation (§10, A6/A7), dropping the opening-lead
+specialists changed performance by only -0.01 IMPs once search runs at ply 0,
+so the deployed minimal 2-component bot uses FastPolicy + GRU BeliefNet only.
 
 Trains a standard cardbot::FastPolicyModel (`BRP1`) at ply == 0 by regressing onto exact single-deal
 centered DD duplicate-score advantages (Bayes-optimal E[dup_score(lead) | hand, contract, bidinfo]!).

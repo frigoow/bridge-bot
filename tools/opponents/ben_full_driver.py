@@ -10,6 +10,8 @@ unused top-level `import tensorflow` statements so no TensorFlow install is requ
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import types
@@ -17,6 +19,15 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+
+
+_DEVNULL_FILE = open(os.devnull, "w")
+
+
+@contextlib.contextmanager
+def _quiet_ben():
+    with contextlib.redirect_stdout(_DEVNULL_FILE):
+        yield
 
 
 _BEN_BOOTSTRAPPED = False
@@ -147,7 +158,8 @@ class BenFullDriverPlayer:
         self.root = Path(ben_root) if ben_root else Path(__file__).resolve().parents[2] / "external" / "ben"
         _bootstrap_ben(self.root)
         conf_mod = _BEN_MODS["conf"]
-        c = conf_mod.load("config/onnx.conf")
+        with _quiet_ben():
+            c = conf_mod.load("config/onnx.conf")
         # Disable external Windows/BGA/ACE/BBA DLLs unless explicitly requested
         c.set("models", "use_bba", "False")
         c.set("models", "consult_bba", "False")
@@ -345,17 +357,18 @@ class BenFullDriverPlayer:
         if p == 0:
             BotLead = _BEN_MODS["BotLead"]
             lead_seat = (self._decl_i + 1) % 4
-            bot_lead = BotLead(
-                self._vuln,
-                self._hands_str[lead_seat],
-                self.models,
-                self.sampler,
-                lead_seat,
-                self._dealer_i,
-                self.dds,
-                False,
-            )
-            card_resp = bot_lead.find_opening_lead(self._auction, {})
+            with _quiet_ben():
+                bot_lead = BotLead(
+                    self._vuln,
+                    self._hands_str[lead_seat],
+                    self.models,
+                    self.sampler,
+                    lead_seat,
+                    self._dealer_i,
+                    self.dds,
+                    False,
+                )
+                card_resp = bot_lead.find_opening_lead(self._auction, {})
             ben_c52 = card_resp.card.code()
             our_c52 = 51 - int(ben_c52)
             assert our_c52 in legal, f"BEN lead {card_resp.card} ({our_c52}) not in legal {legal}"
@@ -381,56 +394,57 @@ class BenFullDriverPlayer:
 
         played_cards = [card for row in self._player_cards_played52 for card in row] + self._current_trick52
         features = {"aceking": {}}
-        (
-            rollout_states,
-            bidding_scores,
-            _c_hcp,
-            _c_shp,
-            quality,
-            prob_occ,
-            lead_scores,
-            play_scores,
-            logical_play_scores,
-            discard_scores,
-            worlds,
-        ) = self.sampler.init_rollout_states(
-            trick_i,
-            player_i,
-            self._card_players,
-            played_cards,
-            self._player_cards_played,
-            self._shown_out_suits,
-            self._discards,
-            features["aceking"],
-            self._current_trick,
-            self._opening_lead52,
-            self._auction,
-            cp.hand_str,
-            cp.public_hand_str,
-            self._vuln,
-            self.models,
-            cp.get_random_generator(),
-        )
-        if self.use_pimc:
-            cp.check_pimc_constraints(trick_i, rollout_states, quality)
-        card_resp = cp.play_card(
-            trick_i,
-            self._leader_i,
-            self._current_trick52,
-            self._tricks52,
-            rollout_states,
-            worlds,
-            bidding_scores,
-            quality,
-            prob_occ,
-            self._shown_out_suits,
-            play_status,
-            lead_scores,
-            play_scores,
-            logical_play_scores,
-            discard_scores,
-            features,
-        )
+        with _quiet_ben():
+            (
+                rollout_states,
+                bidding_scores,
+                _c_hcp,
+                _c_shp,
+                quality,
+                prob_occ,
+                lead_scores,
+                play_scores,
+                logical_play_scores,
+                discard_scores,
+                worlds,
+            ) = self.sampler.init_rollout_states(
+                trick_i,
+                player_i,
+                self._card_players,
+                played_cards,
+                self._player_cards_played,
+                self._shown_out_suits,
+                self._discards,
+                features["aceking"],
+                self._current_trick,
+                self._opening_lead52,
+                self._auction,
+                cp.hand_str,
+                cp.public_hand_str,
+                self._vuln,
+                self.models,
+                cp.get_random_generator(),
+            )
+            if self.use_pimc:
+                cp.check_pimc_constraints(trick_i, rollout_states, quality)
+            card_resp = cp.play_card(
+                trick_i,
+                self._leader_i,
+                self._current_trick52,
+                self._tricks52,
+                rollout_states,
+                worlds,
+                bidding_scores,
+                quality,
+                prob_occ,
+                self._shown_out_suits,
+                play_status,
+                lead_scores,
+                play_scores,
+                logical_play_scores,
+                discard_scores,
+                features,
+            )
         ben_c52 = card_resp.card.code()
         our_c52 = 51 - int(ben_c52)
         assert our_c52 in legal, f"BEN card {card_resp.card} ({our_c52}) not in legal {legal}"

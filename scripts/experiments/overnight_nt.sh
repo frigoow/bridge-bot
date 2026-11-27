@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 mkdir -p runs checkpoints
 
 LOG="runs/overnight_nt_16m.log"

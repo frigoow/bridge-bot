@@ -1,5 +1,8 @@
 # bridge-bot
 
+[![CI](https://github.com/frigoow/bridge-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/frigoow/bridge-bot/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 A **Contract Bridge card-play bot** built on the same game-independent C++20 and PyTorch architecture ([cardbot-framework](https://github.com/frigoow/cardbot-framework)) that powers our [Manille](https://github.com/frigoow/manil-bot) and [Bulgarian Belot](https://github.com/frigoow/belote-bot) bots.
 
 All card-play neural networks (`Q-GRU`, distilled `FastPolicy`, and play-history `BeliefNet`) are trained **from scratch via self-play on a single consumer GPU (NVIDIA RTX 3060)** — with **zero human or master card-play game logs**.
@@ -78,8 +81,8 @@ For full per-strain breakdowns, the 1,000-pair component ablation (`FastPolicy` 
 | `cpp/python/bridge_module.cpp` | `bridge_cpp` pybind11 bindings (`BatchEnv`, `SuitAucBatchEnv`, `NtAucBatchEnv`, `SearchOnWorlds`, `BridgeGame`, `Agent`, DDS helpers, PBN/BEN deal loaders) |
 | `cpp/tests/` | C++ unit tests (`test_rules`, `test_sampler`, `test_dds` cross-checking 100% against Bo Haglund's DDS, `test_search`) |
 | `python/bridge/` | Training scripts built on `cardbot`: `train_dmc.py`, `train_exit.py`, `train_distill.py`, `train_belief.py`, `train_lead.py`, `train_auction.py`, canonical `suit_perm.py`, and BEN deal generator `gen_ben_deals.py` |
-| `tools/opponents/` | Cross-engine duplicate-deal arena (`arena.py`) and BEN ONNX+DDS opponent adapter (`ben_player.py`) |
-| `scripts/` | Reproducible end-to-end training scripts (`train_suit_auc.sh`, `train_nt_auc.sh`, `overnight_*.sh`) and opponent fetcher (`fetch_opponents.sh`) |
+| `tools/opponents/` | Cross-engine duplicate-deal arena (`arena.py`), BEN ONNX+DDS adapter (`ben_player.py`), and full upstream BEN driver adapter (`ben_full_driver.py`) |
+| `scripts/` | Model downloader (`download_models.sh`), external opponent fetcher (`fetch_opponents.sh`), core training pipelines (`train_suit_auc.sh`, `train_nt_auc.sh`), and historical ablation scripts (`scripts/experiments/`) |
 | `docs/BENCHMARKS.md` | Permanent, chronological log of every benchmark, sweep, and ablation |
 | `cardbot-framework/` | Shared game-independent C++20 & PyTorch framework ([frigoow/cardbot-framework](https://github.com/frigoow/cardbot-framework), submodule, Apache-2.0) |
 | `third_party/dds/` | Bo Haglund's Double Dummy Solver ([dds-bridge/dds](https://github.com/dds-bridge/dds), submodule, Apache-2.0) |
@@ -107,9 +110,13 @@ ctest --test-dir build --output-on-failure
 .venv/bin/python -m pytest python/tests -v
 ```
 
-### Fetch External Opponents (BEN & `bridge_learning`)
+### Download Pretrained Weights & Fetch External Opponents
 
 ```bash
+# Download pretrained binary checkpoints (~30 MB, Apache-2.0) into checkpoints/
+./scripts/download_models.sh
+
+# Optionally fetch BEN (GPL-3.0) and bridge_learning into gitignored external/
 ./scripts/fetch_opponents.sh
 ```
 
@@ -145,7 +152,7 @@ PYTHONPATH=build:python .venv/bin/python -m bridge.train_belief \
     --out checkpoints/nt_auc_belief_v3.bin
 ```
 
-See [scripts/train_suit_auc.sh](scripts/train_suit_auc.sh), [scripts/overnight_suit_auc_v2.sh](scripts/overnight_suit_auc_v2.sh), and [scripts/train_nt_auc.sh](scripts/train_nt_auc.sh) for full reproducible pipelines.
+See [scripts/train_suit_auc.sh](scripts/train_suit_auc.sh), [scripts/train_nt_auc.sh](scripts/train_nt_auc.sh), and [scripts/experiments/](scripts/experiments/) for full reproducible pipelines.
 
 ---
 
