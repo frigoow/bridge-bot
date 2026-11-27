@@ -50,78 +50,37 @@ We evaluate against [**BEN**](https://github.com/lorserker/ben) (GPL-3.0, fetche
 
 ---
 
-## Headline Results
+## Results
 
-### 1. Fair Auction-Aware Card-Play Showdown vs BEN (`ben_nn_auc` & `ben_dds_auc`)
+All comparisons below use mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1 core per deal unless noted) against [BEN](https://github.com/lorserker/ben)'s unmodified ONNX networks (`ben_nn_auc`) and ONNX+DDS engine (`ben_dds_auc`) with identical `bidder.onnx` and `W × 6` world budgets.
 
-#### Standalone Neural Networks (Zero Search) vs `ben_nn_auc`
-| Our Standalone Network (Zero Search) | Unseen Dataset | Pairs | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs BEN) |
-|---|---|---:|---:|---:|---:|---:|
-| **`nt_auc_dmc8m` (`Q-GRU`)** | Unseen NT | 1,000 | **+0.88 ± 0.34** (`p < 1e-6`) | **+0.088 ± 0.050** | 39.0% / 28.5% / 32.5% | 6.0 vs 5.7 ms |
-| **`nt_auc_dmc8m_fast` (`512→256` MLP)** | Unseen NT | 1,000 | **+0.52 ± 0.33** (`p = 0.002`) | **+0.064 ± 0.049** | 36.0% / 32.2% / 31.8% | **2.0** vs 4.6 ms |
-| `suit_auc_exit2_q` (`Q-GRU`) | Unseen Suit | 1,000 | +0.23 ± 0.27 | +0.017 ± 0.035 | 28.9% / 43.1% / 28.0% | 6.0 vs 5.6 ms |
-| `suit_auc_exit2_fast` (`512→256` MLP) | Unseen Suit | 1,000 | +0.13 ± 0.27 | +0.017 ± 0.032 | 28.4% / 44.5% / 27.1% | **1.8** vs 4.4 ms |
+### Headline Benchmarks
 
-#### Full Search (`BeliefNet` + `bdraw` + `FastPolicy`) vs `ben_dds_auc` (Matched `W × 6` Pool, 1 Core vs 1 Core)
-| Our Bot vs `ben_dds_auc` | Unseen Dataset | Pairs | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs BEN) |
-|---|---|---:|---:|---:|---:|---:|
-| `16w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:16:6` | Unseen Suit | 1,000 | **+0.28 ± 0.22** (`p = 0.013`) | **+0.055 ± 0.026** | 26.4% / 54.8% / 18.8% | **96.6** vs 109.6 ms |
-| `16w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:16:6` | Unseen NT | 1,000 | +0.17 ± 0.27 | **+0.056 ± 0.041** (`p = 0.007`) | 32.4% / 42.6% / 25.0% | **107.0** vs 119.2 ms |
-| `16w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:16:6` | Unseen All-Strain | 1,000 | **+0.42 ± 0.24** (`p = 5e-4`) | **+0.059 ± 0.032** | 29.3% / 50.5% / 20.2% | **98.4** vs 111.5 ms |
-| `16w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:16:6` | **Real Unseen BBO** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | 29.5% / 49.7% / 20.9% | **103.8** vs 115.8 ms |
-| **Pooled `16w:pool=6` (all unseen)** | **All Unseen** | **3,292** | **+0.32 ± 0.14** (`p = 4.9e-6`) | **+0.058 ± 0.019** (`p = 8.3e-10`) | **29.4% / 49.3% / 21.3%** | **101.0** vs 113.7 ms (**11% faster**) |
-| `32w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:32:6` | Unseen Suit | 1,000 | **+0.25 ± 0.21** (`p = 0.017`) | **+0.062 ± 0.025** | 25.6% / 57.3% / 17.1% | **189.1** vs 225.2 ms |
-| `32w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:32:6` | Unseen NT | 1,000 | +0.23 ± 0.26 | **+0.054 ± 0.039** (`p = 0.007`) | 31.9% / 44.6% / 23.5% | **206.8** vs 233.1 ms |
-| `32w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:32:6` | Unseen All-Strain | 1,000 | +0.20 ± 0.23 | **+0.040 ± 0.030** (`p = 0.009`) | 26.4% / 54.0% / 19.6% | **186.5** vs 215.5 ms |
-| `32w:pool=6` (`dds13:rex13`) vs `ben_dds_auc:32:6` | **Real Unseen BBO** | 292 | +0.38 ± 0.52 | **+0.072 ± 0.059** (`p = 0.017`) | 28.4% / 51.0% / 20.5% | **199.4** vs 224.6 ms |
-| **Pooled `32w:pool=6` (all unseen)** | **All Unseen** | **3,292** | **+0.24 ± 0.13** (`p = 3.3e-4`) | **+0.054 ± 0.018** (`p = 2.0e-9`) | **28.0% / 51.9% / 20.1%** | **194.6** vs 224.6 ms (**13% faster**) |
-| **`64w:pool=6` (`dds13:rex13`)** vs `ben_dds_auc:32:6` | Unseen All-Strain | 300 | **+0.52 ± 0.41** (`p = 0.014`) | **+0.090 ± 0.061** (`p = 0.004`) | 28.3% / 53.7% / 18.0% | 355.6 *(107 ms @16t)* vs 218.2 ms |
-| **4-Trick Neural Rollout `128w:pool=4` (`dds9:rex9`, NO Trick 1–4 DDS)** vs `ben_dds_auc:32:6` | Unseen All-Strain | 500 | **+0.27 ± 0.36** | +0.023 ± 0.047 | 26.6% / 51.2% / 22.2% | **241.4** *(51 ms @16t)* vs 256.3 ms |
+| Matchup (Strictly Unseen Deals) | Mode | Pairs | IMPs/board | Tricks/board | Speed (ours vs BEN) |
+|---|---|---:|---:|---:|---:|
+| **NT `Q-GRU`** vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | **+0.88 ± 0.34** (`p < 1e-6`) | **+0.088 ± 0.050** | 6.0 vs 5.7 ms |
+| **NT `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | **+0.52 ± 0.33** (`p = 0.002`) | **+0.064 ± 0.049** | **2.0** vs 4.6 ms |
+| **Suit `Q-GRU`** vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.23 ± 0.27 | +0.017 ± 0.035 | 6.0 vs 5.6 ms |
+| **Suit `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.13 ± 0.27 | +0.017 ± 0.032 | **1.8** vs 4.4 ms |
+| **Search `16w`** vs `ben_dds_auc:16:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.32 ± 0.14** (`p = 5e-6`) | **+0.058 ± 0.019** | **101** vs 114 ms |
+| **Search `32w`** vs `ben_dds_auc:32:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** | **195** vs 225 ms |
+| **Search `16w`** vs `ben_dds_auc:16:6` | **Real Unseen BBO Daylongs** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | **104** vs 116 ms |
+| **4-Trick Rollout `128w` (`dds9`)** vs `ben_dds_auc:32:6` | Unseen All-Strain *(NO Trick 1–4 DDS)* | 500 | **+0.27 ± 0.36** | +0.023 ± 0.047 | **241** vs 256 ms |
 
----
+### Component Ablation (1,000 Unseen All-Strain Pairs, `16w` vs `ben_dds_auc:16:6`)
 
-### 2. 1,000-Pair Component Ablation (Isolating Every Component)
+Just **two generic `cardbot-framework` components** (`FastPolicy` + GRU `BeliefNet` with `bdraw` proposal sampling, `14.2 MB` total) drive the entire `+0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS:
 
-Controlled 1,000-mirrored-pair ablation on `data/ben_all_eval_1000.bin` (`16w:pool=6` vs `ben_dds_auc:16:6`, identical seed):
+| Configuration | IMPs/board | Tricks/board | Speed (ours vs BEN) |
+|---|---:|---:|---:|
+| Bare (`bidder.onnx` + uniform sampling + DDS, zero learned nets) | −0.52 ± 0.24 | −0.049 ± 0.032 | 102 vs 109 ms |
+| `+ Distilled FastPolicy` (`pb=0.04`) | −0.08 ± 0.23 | −0.004 ± 0.031 | 101 vs 111 ms |
+| `+ GRU BeliefNet` re-scoring (`UNIF + bw=0.25`) | +0.08 ± 0.24 | +0.028 ± 0.031 | 105 vs 110 ms |
+| **`+ bdraw` Proposal Sampling + Dedup** *(minimal 2-component bot)* | **+0.41 ± 0.24** (`p = 7e-4`) | **+0.054 ± 0.031** | **97** vs 111 ms |
 
-| # | Configuration | IMPs/board | Tricks/board | Win / Tie / Loss | Delta | Speed (ours vs BEN) |
-|---|---|---:|---:|---:|---:|---:|
-| **A1** | **Bare** (`bidder.onnx` + uniform + DDS, zero learned nets) | −0.518 ± 0.238 | −0.049 ± 0.032 | 21.2% / 51.4% / 27.4% | — | 101.5 vs 109.0 ms |
-| **A2** | `+ Distilled FastPolicy` (`pb=0.04`) | −0.084 ± 0.233 | −0.004 ± 0.031 | 24.2% / 51.9% / 23.9% | **+0.434** | 101.2 vs 110.7 ms |
-| **A3** | `+ Opening-Lead Specialists` (`slead + nlead`) | −0.139 ± 0.236 | −0.013 ± 0.031 | 22.8% / 53.9% / 23.3% | −0.055 *(redundant)* | 102.1 vs 110.7 ms |
-| **A4** | `+ GRU BeliefNet Re-Scoring` (`UNIF + bw=0.25`) | +0.077 ± 0.237 | +0.028 ± 0.031 | 25.5% / 52.8% / 21.7% | **+0.216** | 105.3 vs 109.8 ms |
-| **Full** | `+ BeliefNet Proposal Sampling + Dedup` (`bdraw`, with lead) | **+0.419 ± 0.235** | **+0.059 ± 0.032** | **29.3% / 50.5% / 20.2%** | **+0.342** | **98.4** vs 111.5 ms |
-| **A5** | **Pure `bdraw + dedup` ONLY** *(no FastPolicy, no Lead)* | **+0.072 ± 0.256** | **+0.033 ± 0.032** | 27.7% / 49.3% / 23.0% | **+0.590** *(vs A1)* | **97.4** vs 109.0 ms |
-| **A6** | **Minimal 2-Component** (`FastPolicy + BeliefNet bdraw+dedup`, **NO lead specialists**) | **+0.409 ± 0.236** (`p = 7e-4`) | **+0.054 ± 0.031** (`p = 6e-4`) | **28.1% / 52.1% / 19.8%** | **+0.927** *(vs A1)* | **97.4** vs 110.9 ms |
+On multi-core CPUs (`t16` persistent work-stealing pool, bit-identical to `t1`), 4-trick neural rollouts (`roll dds9 W=128`) run in **`51 ms` mean / `146 ms` max**, avoiding the `3.83s` worst-case straggler stalls of 13-trick DDS (`W=32`).
 
-**Key insight:** Just **two generic `cardbot-framework` components** (`FastPolicy` + GRU `BeliefNet` with `bdraw + dedup`, `14.2 MB` total, zero Bridge-specific extra networks) deliver the entire **`+0.93 IMPs/bd`** gain over bare auction-filtered PIMC+DDS (`A6`: `+0.409 ± 0.236` vs `Full`: `+0.419 ± 0.235`).
-
----
-
-### 3. Multi-Core Per-Move Latency Scaling (8-Core / 16-Thread CPU)
-
-Measured across 120 unseen All-Strain decision states (plies 0–20) using `cardbot::detail::SearchPool` (`t1 == t16` bit-identical):
-
-| Config | `T=1` Mean | `T=4` Mean | `T=8` Mean | `T=16` Mean | `T=16` p95 | `T=16` Max (tail) | Speedup |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `dds13:rex13 W=16` | 161.7 ms | 57.8 ms | 46.6 ms | **45.0 ms** | 187.0 ms | 626.4 ms | 3.60× |
-| `dds13:rex13 W=32` | 423.5 ms | 149.6 ms | 119.3 ms | **116.8 ms** | 357.6 ms | **3,832.5 ms** | 3.62× |
-| `dds13:rex13 W=64` | 673.0 ms | 185.2 ms | 119.6 ms | **107.0 ms** | 436.8 ms | 1,200.4 ms | 6.29× |
-| `roll dds9 W=128` | 252.0 ms | 73.1 ms | 56.0 ms | **51.2 ms** | 124.2 ms | **146.2 ms** | 4.93× |
-| `roll dds8 W=1,000` | 563.3 ms | 160.3 ms | 106.7 ms | **96.5 ms** | 274.2 ms | 402.5 ms | **5.84×** |
-
-13-trick DDS suffers severe straggler stalls (one tangled board stalls `W=32` for `3.83s` even on 16 threads), whereas 4-trick neural rollouts (`roll dds9 W=128`) run in **`51.2 ms` mean / `146.2 ms` max** (**26× lower tail latency**).
-
----
-
-### 4. No-Auction & Self-Contained `AuctionModel` Results (Zero BEN Bidder)
-
-Without using BEN's `bidder.onnx` at all (1,000 mirrored pairs vs no-auction `ben_dds:16`):
-- **Pure Neural Rollouts + Late Endgame (`96w:dds8:rex8`, NO Trick 1–5 DDS):** **`+0.33 ± 0.32 IMPs/bd`**, `+0.036 ± 0.037 trk`, **`82.4` vs `100.4 ms`** (18% faster).
-- **Matched DDS (`20w:dds13:rex13`):** **`+0.45 ± 0.31 IMPs/bd`**, **`+0.070 ± 0.035 trk`** (`102.0` vs `89.9 ms`).
-- **Our Own 1.2 MB `AuctionModel` (`auction_v1.bin`) + `96w:dds8:rex8` on 292 Real Unseen BBO Daylongs vs `ben_dds:16`:** **`+0.62 ± 0.55 IMPs/bd`**, **`91.5` vs `102.9 ms`**.
-
-Full chronological benchmark logs, endgame-threshold sweeps (`dds0 → ab4 → dds6 → dds8 → dds13`), and baseline ladders (`random` → `rule` → `ismcts` → `ben_nn` → `pimc_dds` → `ben_dds` → `dd_oracle`) are documented in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+For complete per-strain breakdowns (Suit, NT, All-Strain, BBO), no-auction & `AuctionModel` evaluations, endgame handoff sweeps (`dds0 → dds13`), and multi-core latency tables, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ---
 
