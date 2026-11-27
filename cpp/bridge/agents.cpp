@@ -164,6 +164,8 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.race = false;
         } else if (p == "race") {
             o.race = true;
+        } else if (p.size() >= 2 && p[0] == 't' && std::isdigit(static_cast<unsigned char>(p[1]))) {
+            o.threads = unsigned(std::stoul(p.substr(1)));
         }
     }
     return o;

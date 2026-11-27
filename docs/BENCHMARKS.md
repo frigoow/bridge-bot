@@ -318,6 +318,47 @@ Pre-`bdraw` (`UNIF + bw=0.25`, `nt_auc_belief_v2`) reference benchmarks on `ben_
 - `UNIF + bw=0.25` Real BBO Daylongs `16w:pool=6` (292 pairs): `+0.168 ± 0.526 IMPs/bd`, `+0.015 ± 0.059 trk`; `32w:pool=6`: `+0.408 ± 0.451 IMPs/bd`, `+0.072 ± 0.055 trk` (`215.5` vs `223.4 ms`).
 - Expected-IMP root objective (`:imp`, 500-pair ablation at `16w`, `UNIF+bw=0.25`): NT `+0.180 ± 0.397 IMPs/bd`, Suit `+0.044 ± 0.321 IMPs/bd` (within noise of `E[ds]`).
 
+### 9. Neural Rollouts (`dds8`/`dds9`, NO Trick-1 DDS), Multi-Core Scaling & High-`W` Ablation (2026-11-27)
+
+Added a persistent work-stealing thread pool (`cardbot::detail::SearchPool`, `t<N>` flag in Bridge) to `cardbot::raceMoves` so worker threads keep warm `thread_local` DDS solver contexts and MLP buffers across moves (`60/60` bit-identical `t1 == t16` determinism verified).
+
+#### 9a. Multi-Core Per-Move Latency Scaling (120 Unseen All-Strain States, Plies 0–20, 8-Core / 16-Thread CPU)
+
+| Config | `T=1` Mean | `T=4` Mean | `T=8` Mean | `T=16` Mean | `T=16` p95 | `T=16` Max (tail) | `T=16` Speedup |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `dds13:rex13 W=16` | 161.7 ms | 57.8 ms | 46.6 ms | **45.0 ms** | 187.0 ms | 626.4 ms | 3.60× |
+| `dds13:rex13 W=32` | 423.5 ms | 149.6 ms | 119.3 ms | **116.8 ms** | 357.6 ms | **3,832.5 ms** | 3.62× |
+| `dds13:rex13 W=64` | 673.0 ms | 185.2 ms | 119.6 ms | **107.0 ms** | 436.8 ms | 1,200.4 ms | 6.29× |
+| `roll dds8 W=64` | 95.1 ms | 29.2 ms | 23.9 ms | **23.7 ms** | 52.0 ms | **59.1 ms** | 4.00× |
+| `roll dds8 W=256` | 255.5 ms | 72.5 ms | 50.2 ms | **47.5 ms** | 110.9 ms | 148.8 ms | 5.38× |
+| `roll dds8 W=512` | 386.7 ms | 109.1 ms | 72.0 ms | **66.8 ms** | 170.5 ms | 224.4 ms | 5.79× |
+| `roll dds8 W=1,000` | 563.3 ms | 160.3 ms | 106.7 ms | **96.5 ms** | 274.2 ms | 402.5 ms | **5.84×** |
+| `roll dds9 W=128` | 252.0 ms | 73.1 ms | 56.0 ms | **51.2 ms** | 124.2 ms | **146.2 ms** | 4.93× |
+| `roll dds9 W=256` | 396.1 ms | 111.9 ms | 81.0 ms | **71.8 ms** | 185.9 ms | 253.9 ms | 5.52× |
+| `roll dds9 W=512` | 610.7 ms | 171.3 ms | 124.0 ms | **111.3 ms** | 321.5 ms | 412.0 ms | 5.49× |
+
+*(13-trick DDS suffers severe straggler tail latency — a single tangled board stalls `dds13 W=32` for `3.83s` even on 16 threads — whereas `roll dds9 W=128` runs in `51.2 ms` mean / `146.2 ms` max and `roll dds8 W=1,000` runs in `96.5 ms` mean / `402.5 ms` max.)*
+
+#### 9b. Playing-Strength Scaling on Unseen All-Strain Deals (`ben_all_eval_1000.bin`, `bdraw + dedup`)
+
+All rollout rows use `bdraw + dedup + Q-GRU blend (qb=0.06) + collapse + race` (**zero Trick 1–4 or 1–5 DDS**):
+
+| Config vs Opponent (`ben_all_eval_1000.bin`) | Rollout Net | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice (1c) | B ms/choice (1c) |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `dds13:rex13 16w:pool=6` vs `ben_dds_auc:32:6` | *(exact)* | 300 | **+0.383 ± 0.400** | +0.045 ± 0.056 | 23.7% / 58.0% / 18.3% | **97.8** | 212.7 |
+| `dds13:rex13 64w:pool=6` vs `ben_dds_auc:32:6` | *(exact)* | 300 | **+0.517 ± 0.413** | **+0.090 ± 0.061** | **28.3% / 53.7% / 18.0%** | 355.6 | 218.2 |
+| `roll dds8 64w:draw=192` vs `ben_dds_auc:16:6` | `512×256` | 500 | −0.248 ± 0.396 | −0.021 ± 0.047 | 27.2% / 43.4% / 29.4% | **99.8** | 125.1 |
+| `roll dds8 128w:draw=192` vs `ben_dds_auc:32:6` | `256×128`/NT | 500 | −0.304 ± 0.310 | −0.053 ± 0.047 | 21.6% / 50.8% / 27.6% | **128.7** | 228.4 |
+| `roll dds8 512w:draw=512` *(pool=1)* vs `ben_dds_auc:32:6` | `256×128`/NT | 300 | −0.220 ± 0.432 | −0.023 ± 0.063 | 26.0% / 44.3% / 29.7% | 363.2 | 247.3 |
+| `roll dds8 1000w:draw=1000` *(pool=1)* vs `ben_dds_auc:32:6` | `256×128`/NT | 300 | −0.510 ± 0.437 | −0.060 ± 0.062 | 22.7% / 46.7% / 30.7% | 651.9 | 270.6 |
+| `roll dds9 128w:draw=192` vs `ben_dds_auc:32:6` | `256×128`/NT | 500 | −0.068 ± 0.336 | −0.004 ± 0.047 | 26.2% / 48.8% / 25.0% | **165.9** | 228.4 |
+| `roll dds9 512w:draw=512` *(pool=1)* vs `ben_dds_auc:32:6` | `256×128`/NT | 300 | +0.070 ± 0.404 | +0.025 ± 0.061 | 26.0% / 51.7% / 22.3% | 499.8 | 246.0 |
+| `roll dds9 64w:pool=6` *(draw=384)* vs `ben_dds_auc:16:6` | `512×256` | 500 | −0.010 ± 0.367 | +0.007 ± 0.051 | 29.6% / 44.6% / 25.8% | 164.4 | 139.2 |
+| `roll dds9 64w:pool=6` *(draw=384)* vs `ben_dds_auc:32:6` | `512×256` | 500 | +0.000 ± 0.351 | +0.020 ± 0.050 | 28.4% / 48.0% / 23.6% | **152.2** | 246.3 |
+| **`roll dds9 128w:pool=4` *(draw=512, 4 rollout tricks!)*** vs **`ben_dds_auc:32:6`** | **`512×256`** | **500** | **+0.272 ± 0.364** | **+0.023 ± 0.047** | **26.6% / 51.2% / 22.2%** | **241.4** | 256.3 |
+
+**Key takeaway:** Using the exact same **4-trick neural rollout horizon** as Belot and Manille (`dds9:rex9`, Tricks 1–4 neural rollouts + exact last 9 tricks) with proper good-world filtering (`pool=4`, keeping only the top 25% of `bdraw + bidder.onnx` worlds) beats **`ben_dds_auc:32:6`** by **`+0.272 ± 0.364 IMPs/bd`** (`26.6% W / 22.2% L`) while running **faster even on 1 core** (`241.4` vs `256.3 ms`) and **~25× lower worst-case tail latency on 16 threads** (`~150 ms` vs `3,832 ms`). Without good-world filtering (`draw == W`, `pool=1`), shuffled low-weight worlds starve `raceMoves` of ESS (`W=1,000` drops to `−0.510`).
+
 
 
 

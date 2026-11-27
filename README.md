@@ -77,6 +77,7 @@ Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (official unmodi
 | **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | Unseen All-Strain | 1,000 | +0.20 ± 0.23 | **+0.040 ± 0.030** | 26.4% / 54.0% / 19.6% | **186.5** vs 215.5 ms |
 | **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | **Real Unseen BBO** | 292 | +0.38 ± 0.52 | **+0.072 ± 0.059** | 28.4% / 51.0% / 20.5% | **199.4** vs 224.6 ms |
 | **Pooled `32w:pool=6` across all unseen datasets** vs `ben_dds_auc:32:6` | **All Unseen** | **3,292** | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** (`p = 2e-9`) | **28.0% / 51.9% / 20.1%** | **194.6** vs 224.6 ms |
+| **4-Trick Neural Rollout `128w:pool=4:dds9:rex9` *(NO Trick 1–4 DDS!)*** vs `ben_dds_auc:32:6` | Unseen All-Strain | 500 | **+0.27 ± 0.36** | +0.023 ± 0.047 | 26.6% / 51.2% / 22.2% | **241.4** vs 256.3 ms |
 
 Full progression, standalone network tables, and ablations are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 

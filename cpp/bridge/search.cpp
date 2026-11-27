@@ -509,6 +509,7 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     ro.race_z = opt.race_z;
     ro.z = opt.z;
     ro.margin = opt.margin;
+    ro.threads = opt.threads;
 
     const auto rr = cardbot::raceMoves<int>(legal, ws.weights, ws.enumerated, root_exact, prior, eval_world, qb, ro);
     out.card = rr.move;
@@ -744,6 +745,7 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     ro.race_z = opt.race_z;
     ro.z = opt.z;
     ro.margin = opt.margin;
+    ro.threads = opt.threads;
 
     // When racing on externally ordered worlds (e.g. argsort-ascending by likelihood),
     // permute worlds deterministically so Stage 1 is an unbiased sample of the posterior.

@@ -38,6 +38,7 @@ struct SearchOptions {
     double race_z = 2.0;
     double z = -1.0;              // < 0: always argmax; >= 0: overrule prior only if gain > z*se && > margin
     double margin = 0.05;
+    unsigned threads = 1;         // > 1: parallelize per-move world evaluations across CPU cores
     double q_blend = 0.0;         // weight on QGruModel values in raceMoves
     double policy_blend = 0.0;    // weight on FastPolicy softmax probs in raceMoves (e.g. 0.04 -> ~20 pts)
     int q_taper_trick = 9;        // linearly taper q_blend to 0 by this 1-based trick
