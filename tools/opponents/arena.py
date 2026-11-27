@@ -10,7 +10,7 @@ Example:
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import math
 import sys
 import threading
@@ -142,6 +142,26 @@ def make_player_factory(spec: str):
 
         return factory
 
+    if spec == "ben_full" or spec.startswith("ben_full:") or spec == "ben_full_pimc" or spec.startswith("ben_full_pimc:"):
+        use_pimc = spec.startswith("ben_full_pimc")
+        parts = spec.split(":")
+        w = int(parts[1]) if len(parts) >= 2 else None
+        boards = int(parts[2]) if len(parts) >= 3 else None
+        local = threading.local()
+
+        def factory(seed: int):
+            if not hasattr(local, "ben_full"):
+                from ben_full_driver import BenFullDriverPlayer
+                local.ben_full = BenFullDriverPlayer(
+                    sample_hands_play=w, sample_boards_for_play=boards, use_pimc=use_pimc, pimc_threads=1, seed=seed
+                )
+            else:
+                local.ben_full.seed = seed
+            ben = local.ben_full
+            return lambda g: ben.act(g)
+
+        return factory
+
     if spec == "ben_dds_auc" or spec.startswith("ben_dds_auc:"):
         parts = spec.split(":")
         w = int(parts[1]) if len(parts) >= 2 else 16
@@ -181,8 +201,7 @@ def make_player_factory(spec: str):
     return factory
 
 
-def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, strain: int,
-              dd_bench: bool, threads: int = 8, ben_deals_bin: str | None = None):
+def _load_games(deals: int, seed: int, pbn: str | None, strain: int, ben_deals_bin: str | None):
     if ben_deals_bin:
         games = bridge_cpp.load_ben_deals(ben_deals_bin, deals)
         if strain == 0:
@@ -191,7 +210,8 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
             games = [g for g in games if g.contract().strain == 4]
         if not games:
             raise RuntimeError(f"No deals loaded from {ben_deals_bin}")
-    elif pbn:
+        return games
+    if pbn:
         games = bridge_cpp.load_pbn(pbn, False, deals, seed)
         if strain == 0:
             games = [g for g in games if g.contract().strain != 4]
@@ -199,7 +219,6 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
             games = [g for g in games if g.contract().strain == 4]
         if not games:
             raise RuntimeError(f"No deals loaded from {pbn}")
-        # If any auctioned PBN lacks precomputed bidinfo, populate it ONCE using BEN bidinfo.onnx!
         if any(g.contract().has_auction() and not g.contract().has_bidinfo for g in games):
             nn_tmp = BenOnnxPlayer(threads=1)
             if nn_tmp.bidinfo is not None:
@@ -219,15 +238,20 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
                         g = g.with_bidinfo(bi_all)
                     enriched.append(g)
                 games = enriched
-    else:
-        games = [bridge_cpp.random_game((seed * 0x9E3779B97F4A7C15 + i) & 0xFFFFFFFFFFFFFFFF, strain)
-                 for i in range(deals)]
+        return games
+    return [bridge_cpp.random_game((seed * 0x9E3779B97F4A7C15 + i) & 0xFFFFFFFFFFFFFFFF, strain)
+            for i in range(deals)]
 
+
+def _play_slice_worker(args):
+    wid, n_workers, spec_a, spec_b, deals, seed, pbn, strain, dd_bench, ben_deals_bin = args
+    games = _load_games(deals, seed, pbn, strain, ben_deals_bin)
     fac_a = make_player_factory(spec_a)
     fac_b = make_player_factory(spec_b)
-
-    def play_pair(item):
-        i, base = item
+    out = []
+    for i, base in enumerate(games):
+        if i % n_workers != wid:
+            continue
         dd_decl = bridge_cpp.dds_total_declarer_tricks(base) if dd_bench else -1
         score_a = [0.0, 0.0]
         trick_a = [0.0, 0.0]
@@ -263,15 +287,75 @@ def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, 
                     lb = float(dd_decl - g.decl_tricks())
         imp = float(bridge_cpp.imp_from_diff(int(round(score_a[0] + score_a[1]))))
         tr = 0.5 * (trick_a[0] + trick_a[1])
-        return imp, tr, la, lb, t_a, t_b, m_a, m_b
+        out.append((i, (imp, tr, la, lb, t_a, t_b, m_a, m_b)))
+    return out
 
+
+def run_arena(spec_a: str, spec_b: str, deals: int, seed: int, pbn: str | None, strain: int,
+              dd_bench: bool, threads: int = 8, ben_deals_bin: str | None = None):
     wall0 = time.perf_counter()
-    nt = max(1, min(threads, len(games)))
-    if nt == 1:
-        results = [play_pair(it) for it in enumerate(games)]
+    use_mp = ("ben_full" in spec_a or "ben_full" in spec_b) and threads > 1
+    if use_mp:
+        nt = max(1, threads)
+        tasks = [
+            (wid, nt, spec_a, spec_b, deals, seed, pbn, strain, dd_bench, ben_deals_bin)
+            for wid in range(nt)
+        ]
+        with ProcessPoolExecutor(max_workers=nt) as ex:
+            chunks = list(ex.map(_play_slice_worker, tasks))
+        indexed = [pair for ch in chunks for pair in ch]
+        indexed.sort(key=lambda x: x[0])
+        results = [r for _, r in indexed]
     else:
-        with ThreadPoolExecutor(max_workers=nt) as ex:
-            results = list(ex.map(play_pair, enumerate(games)))
+        games = _load_games(deals, seed, pbn, strain, ben_deals_bin)
+        fac_a = make_player_factory(spec_a)
+        fac_b = make_player_factory(spec_b)
+
+        def play_pair(item):
+            i, base = item
+            dd_decl = bridge_cpp.dds_total_declarer_tricks(base) if dd_bench else -1
+            score_a = [0.0, 0.0]
+            trick_a = [0.0, 0.0]
+            la = lb = 0.0
+            t_a = t_b = 0.0
+            m_a = m_b = 0
+            for table in (0, 1):
+                g = base.copy()
+                a_team = table
+                pa = fac_a(seed * 1000003 + i * 2 + table + 11)
+                pb = fac_b(seed * 1000003 + i * 2 + table + 29)
+                while not g.finished():
+                    seat = g.to_move()
+                    is_a = (g.team(seat) == a_team)
+                    has_choice = len(g.legal_actions()) > 1
+                    t0 = time.perf_counter()
+                    card = pa(g) if is_a else pb(g)
+                    dt = time.perf_counter() - t0
+                    if has_choice:
+                        if is_a:
+                            t_a += dt
+                            m_a += 1
+                        else:
+                            t_b += dt
+                            m_b += 1
+                    g.apply(card)
+                score_a[table] = g.payoff(a_team)
+                trick_a[table] = (g.tricks_ns() if a_team == 0 else g.tricks_ew()) - 6.5
+                if dd_bench:
+                    if a_team == base.contract().declarer_team():
+                        la = float(dd_decl - g.decl_tricks())
+                    else:
+                        lb = float(dd_decl - g.decl_tricks())
+            imp = float(bridge_cpp.imp_from_diff(int(round(score_a[0] + score_a[1]))))
+            tr = 0.5 * (trick_a[0] + trick_a[1])
+            return imp, tr, la, lb, t_a, t_b, m_a, m_b
+
+        nt = max(1, min(threads, len(games)))
+        if nt == 1:
+            results = [play_pair(it) for it in enumerate(games)]
+        else:
+            with ThreadPoolExecutor(max_workers=nt) as ex:
+                results = list(ex.map(play_pair, enumerate(games)))
     wall = time.perf_counter() - wall0
 
     imps_arr = np.array([r[0] for r in results])

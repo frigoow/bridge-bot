@@ -13,7 +13,7 @@ if [ ! -d "$ROOT/external/ben/.git" ]; then
     echo "Fetching lorserker/ben (sparse checkout: src, models/onnx, Boards, Challenges, bin/libdds.so)..."
     git clone --depth 1 --filter=blob:none --sparse https://github.com/lorserker/ben.git "$ROOT/external/ben"
     git -C "$ROOT/external/ben" sparse-checkout set --no-cone \
-        /LICENSE /README.md /src/ /models/onnx/ /Boards/ /Challenges/ /bin/libdds.so /bin/dds3-linux/
+        /LICENSE /README.md /src/ /models/onnx/ /Boards/ /Challenges/ /bin/libdds.so /bin/dds3-linux/ /bin/libsuitc.so /bin/BGA/linux/x64/
 else
     echo "external/ben already present."
 fi

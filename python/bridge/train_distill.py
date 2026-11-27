@@ -37,6 +37,10 @@ def main():
     ap.add_argument("--batch-size", type=int, default=2048)
     ap.add_argument("--lr", type=float, default=1.5e-3)
     ap.add_argument("--temperature", type=float, default=0.05)
+    ap.add_argument("--eps", type=float, default=0.0, help="Teacher exploration rate for off-policy rollout robustness")
+    ap.add_argument("--max-ply", type=int, default=0, help="> 0: hard-drop plies >= max_ply")
+    ap.add_argument("--early-ply", type=int, default=0, help="> 0: upweight plies < early_ply by --early-weight")
+    ap.add_argument("--early-weight", type=float, default=1.0, help="Loss weight on plies < early_ply (e.g. 5.0 for dds9)")
     ap.add_argument("--h1", type=int, default=256)
     ap.add_argument("--h2", type=int, default=128)
     ap.add_argument("--state-hidden", type=int, default=384)
@@ -65,6 +69,10 @@ def main():
         batch_size=args.batch_size,
         lr=args.lr,
         temperature=args.temperature,
+        eps=args.eps,
+        max_ply=args.max_ply,
+        early_ply=args.early_ply,
+        early_weight=args.early_weight,
         seed=args.seed,
     )
     aug = SuitPermAugmenter(cfg.device, state_dim=env.STATE_DIM)

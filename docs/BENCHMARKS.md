@@ -376,6 +376,20 @@ To isolate every component's exact contribution — and verify whether any Bridg
 
 **Takeaway:** Dropping both the Bridge-specific opening-lead specialists (`A6`) and per-strain belief temperatures (`A7`, single `bt=1.5`) preserves the full gain (**`+0.388 ± 0.251 IMPs`, `+0.060 ± 0.031 trk`, `29.4% W / 20.1% L`, 13.1% faster**), proving that **just two generic `cardbot-framework` components** — distilled `FastPolicy` (`+0.434`) and GRU `BeliefNet` with `bdraw + dedup` (`+0.590` standalone over bare) — account for the entire `+0.91–0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS (`14.2 MB` total footprint).
 
+### 11. Head-to-Head vs Full Unmodified Upstream BEN Production Driver (`ben_full_pimc`, 2026-11-27)
+
+Wrapped BEN's complete unmodified upstream card-play driver ([tools/opponents/ben_full_driver.py](../tools/opponents/ben_full_driver.py)) running official `external/ben/src/config/onnx.conf` defaults (`BotLead` + `Sample.init_rollout_states` drawing 5,000–30,000 boards → 200 samples + `CardPlayer` + `carding.py` + `libsuitc.so` suit combinations + `BGADLL.so` PIMC declaring/defending + `dds3`, single-threaded `dds_threads=1, pimc_threads=1` per worker) on all **292 Real Unseen Human BBO Daylongs (`data/eval_bbo_unseen.pbn`)**:
+
+| Our Bot vs Full Upstream BEN (`ben_full_pimc`) | Pairs (Real BBO) | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| **4-Trick Neural Rollout `128w:pool=4` (`dds9:rex9`, NO Trick 1–4 DDS)** | 292 | −0.264 ± 0.520 | −0.053 ± 0.065 | 24.3% / 46.2% / 29.5% | **128.3** | 801.3 (**6.2× faster**) |
+| **Minimal 2-Component `64w:pool=6` (`dds13:rex13`, zero SuitC / BGADLL / carding / lead nets)** | **292** | **+0.332 ± 0.475** | **+0.057 ± 0.054** (`p = 0.039`) | **27.1% / 51.7% / 21.2%** | **224.3** | 813.3 (**3.6× faster**) |
+
+**Discarded Early-Trick Distillation Ablation (`--early-ply 16 --early-weight 5.0 --eps 0.08`, Q-GRU teacher only):**
+- Standalone `suit_auc_early_fast` vs `ben_nn_auc` (1,000 Suit pairs): `−0.246 ± 0.287 IMPs/bd`, `−0.068 ± 0.035 trk` (weaker than ExIt2 search-trained `suit_auc_exit2_fast` `+0.13 ± 0.27`, confirming that ExIt search targets matter more on Suit than extra Q-GRU distillation).
+- Standalone `nt_auc_early_fast` vs `ben_nn_auc` (1,000 NT pairs): `+0.463 ± 0.326 IMPs/bd`, `+0.059 ± 0.047 trk` (`37.4% W / 32.4% L`, close to `nt_auc_dmc8m_fast` `+0.521 ± 0.333`).
+- `128w:pool=4:dds9` with `early_fast` vs `ben_dds_auc:32:6` (1,000 All-Strain pairs): `−0.134 ± 0.247 IMPs/bd`, `+0.015 ± 0.033 trk` (`27.3% W / 46.5% T / 26.2% L`, `235.6` vs `252.3 ms`) — kept ExIt2 `suit_auc_exit2_fast` + `nt_auc_dmc8m_fast` as deployed models.
+
 
 
 

@@ -63,6 +63,7 @@ Mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1
 | **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.32 ± 0.14** (`p = 5e-6`) | **+0.058 ± 0.019** | **101** vs 114 ms |
 | **Full Bot (`32w`)** vs `ben_dds_auc:32:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** | **195** vs 225 ms |
 | **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | **Real Unseen BBO Daylongs** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | **104** vs 116 ms |
+| **Minimal Bot (`64w`)** vs **Full Upstream BEN (`ben_full_pimc`)** | **Real Unseen BBO Daylongs** | 292 | **+0.33 ± 0.48** | **+0.057 ± 0.054** (`p = 0.039`) | **224** vs 813 ms (**3.6× faster**) |
 
 For full per-strain breakdowns, the 1,000-pair component ablation (`FastPolicy` + `BeliefNet` `bdraw` accounting for `+0.93 IMPs/bd` over bare PIMC+DDS), neural rollout (`dds9`) & endgame sweeps (`dds0 → dds13`), and multi-core latency scaling, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
