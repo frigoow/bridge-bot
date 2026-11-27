@@ -12,3 +12,4 @@ external/
 *.onnx
 .vscode/
 .DS_Store
+suitc.txt
