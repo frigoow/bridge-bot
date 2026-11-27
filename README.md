@@ -52,9 +52,7 @@ We evaluate against [**BEN**](https://github.com/lorserker/ben) (GPL-3.0, fetche
 
 ## Results
 
-All comparisons below use mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1 core per deal unless noted) against [BEN](https://github.com/lorserker/ben)'s unmodified ONNX networks (`ben_nn_auc`) and ONNX+DDS engine (`ben_dds_auc`) with identical `bidder.onnx` and `W × 6` world budgets.
-
-### Headline Benchmarks
+Mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1 core per deal) against [BEN](https://github.com/lorserker/ben)'s unmodified ONNX networks (`ben_nn_auc`) and ONNX+DDS engine (`ben_dds_auc`) with identical `bidder.onnx` and `W × 6` world budgets:
 
 | Matchup (Strictly Unseen Deals) | Mode | Pairs | IMPs/board | Tricks/board | Speed (ours vs BEN) |
 |---|---|---:|---:|---:|---:|
@@ -62,25 +60,11 @@ All comparisons below use mirrored duplicate deals (WBF IMPs/board and tricks/bo
 | **NT `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | **+0.52 ± 0.33** (`p = 0.002`) | **+0.064 ± 0.049** | **2.0** vs 4.6 ms |
 | **Suit `Q-GRU`** vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.23 ± 0.27 | +0.017 ± 0.035 | 6.0 vs 5.6 ms |
 | **Suit `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.13 ± 0.27 | +0.017 ± 0.032 | **1.8** vs 4.4 ms |
-| **Search `16w`** vs `ben_dds_auc:16:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.32 ± 0.14** (`p = 5e-6`) | **+0.058 ± 0.019** | **101** vs 114 ms |
-| **Search `32w`** vs `ben_dds_auc:32:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** | **195** vs 225 ms |
-| **Search `16w`** vs `ben_dds_auc:16:6` | **Real Unseen BBO Daylongs** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | **104** vs 116 ms |
-| **4-Trick Rollout `128w` (`dds9`)** vs `ben_dds_auc:32:6` | Unseen All-Strain *(NO Trick 1–4 DDS)* | 500 | **+0.27 ± 0.36** | +0.023 ± 0.047 | **241** vs 256 ms |
+| **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.32 ± 0.14** (`p = 5e-6`) | **+0.058 ± 0.019** | **101** vs 114 ms |
+| **Full Bot (`32w`)** vs `ben_dds_auc:32:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** | **195** vs 225 ms |
+| **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | **Real Unseen BBO Daylongs** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | **104** vs 116 ms |
 
-### Component Ablation (1,000 Unseen All-Strain Pairs, `16w` vs `ben_dds_auc:16:6`)
-
-Just **two generic `cardbot-framework` components** (`FastPolicy` + GRU `BeliefNet` with `bdraw` proposal sampling, `14.2 MB` total) drive the entire `+0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS:
-
-| Configuration | IMPs/board | Tricks/board | Speed (ours vs BEN) |
-|---|---:|---:|---:|
-| Bare (`bidder.onnx` + uniform sampling + DDS, zero learned nets) | −0.52 ± 0.24 | −0.049 ± 0.032 | 102 vs 109 ms |
-| `+ Distilled FastPolicy` (`pb=0.04`) | −0.08 ± 0.23 | −0.004 ± 0.031 | 101 vs 111 ms |
-| `+ GRU BeliefNet` re-scoring (`UNIF + bw=0.25`) | +0.08 ± 0.24 | +0.028 ± 0.031 | 105 vs 110 ms |
-| **`+ bdraw` Proposal Sampling + Dedup** *(minimal 2-component bot)* | **+0.41 ± 0.24** (`p = 7e-4`) | **+0.054 ± 0.031** | **97** vs 111 ms |
-
-On multi-core CPUs (`t16` persistent work-stealing pool, bit-identical to `t1`), 4-trick neural rollouts (`roll dds9 W=128`) run in **`51 ms` mean / `146 ms` max**, avoiding the `3.83s` worst-case straggler stalls of 13-trick DDS (`W=32`).
-
-For complete per-strain breakdowns (Suit, NT, All-Strain, BBO), no-auction & `AuctionModel` evaluations, endgame handoff sweeps (`dds0 → dds13`), and multi-core latency tables, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+For full per-strain breakdowns, the 1,000-pair component ablation (`FastPolicy` + `BeliefNet` `bdraw` accounting for `+0.93 IMPs/bd` over bare PIMC+DDS), neural rollout (`dds9`) & endgame sweeps (`dds0 → dds13`), and multi-core latency scaling, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ---
 
