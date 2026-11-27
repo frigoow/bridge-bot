@@ -47,8 +47,9 @@ All head-to-head results use **mirrored duplicate deals**: Bot A plays North–S
 
 ### Attribution & Fair Comparison vs BEN
 We evaluate against [**BEN**](https://github.com/lorserker/ben) (GPL-3.0, fetched externally into gitignored `external/ben/` via `./scripts/fetch_opponents.sh` — never bundled here), a widely used open-source neural + DDS Bridge engine:
-- **`ben_nn_auc` / `ben_dds_auc` ([tools/opponents/ben_player.py](tools/opponents/ben_player.py)):** Runs BEN's official unmodified pretrained ONNX networks (`bidder`, `bidinfo`, `lead_suit`, `lead_nt`, `suit[0..3]`, `nt[0..3]`) paired with Bo Haglund's DDS under matched `W × 6` candidate budgets (`nn_weight=20.0`, `auc_weight=0.45`). *(Note: upstream BEN's full Python application also contains optional heuristic carding rules and configuration modes not modeled in the pure ONNX+DDS benchmark driver.)*
-- **Shared-Auction Fairness Control:** In Sections 1–3 below, **both** bots share BEN's exact `bidder.onnx` + `bidinfo.onnx` and identical `W × 6` world-scoring budgets so every IMP measures **100% pure card play** with zero bidding mismatch.
+- **`ben_nn_auc` / `ben_dds_auc` ([tools/opponents/ben_player.py](tools/opponents/ben_player.py)):** Runs BEN's unmodified pretrained ONNX networks (`bidder`, `bidinfo`, `lead_suit`, `lead_nt`, `suit[0..3]`, `nt[0..3]`) paired with Bo Haglund's DDS under matched `W × 6` candidate budgets (`nn_weight=20.0`, `auc_weight=0.45`).
+- **`ben_full_pimc` ([tools/opponents/ben_full_driver.py](tools/opponents/ben_full_driver.py)):** Runs BEN's complete unmodified upstream `config/onnx.conf` production driver (`BotLead`, `Sample.init_rollout_states` drawing 5,000–30,000 boards → 200 samples, `CardPlayer`, `carding.py`, `libsuitc.so` suit combinations, `BGADLL.so` PIMC declaring/defending, and `dds3`, single-threaded per worker).
+- **How Bidding Info Is Used:** In shared-auction comparisons, **both** bots share BEN's exact `bidder.onnx` (exact Bayesian auction log-likelihood ranking over candidate worlds) and `bidinfo.onnx` (15 canonicalized HCP/suit-length summary floats read by our `Q-GRU`, `FastPolicy`, and `BeliefNet`), isolating 100% pure card play. For zero-BEN standalone play, our own 1.2 MB C++ [AuctionModel](cpp/bridge/auction_model.h) (`checkpoints/auction_v1.bin`) replaces `bidder.onnx`.
 - **Strictly Unseen Holdouts:** Every evaluation set is strictly disjoint from training — 1,000 unseen BEN-bid Suit deals (`seed=999999`), 1,000 unseen BEN-bid NT deals (`seed=999999`), 1,000 unseen natural All-Strain deals (`seed=888888`, 782 Suit + 218 NT), and **292 real human/GIB BBO Daylong boards** (`eval_bbo_unseen.pbn`, zero BBO boards in training).
 
 ---
@@ -132,10 +133,12 @@ ctest --test-dir build --output-on-failure
 ./build/bridge_duel --a pimc_dds:16 --b rule \
     --pbn "external/ben/Boards/BBO/Ben & Friends Daily - 2024-07-11 Daylong.pbn" --threads 16
 
-# 3. Cross-engine arena against BEN ONNX+DDS (minimal 2-component bot)
+# 3. Cross-engine arena against BEN ONNX+DDS or full upstream BEN (minimal 2-component bot)
 PYTHONPATH=build:python:tools/opponents .venv/bin/python tools/opponents/arena.py \
     --a "shared_auc+search:16:pool=6:dds13:rex13:sfast=checkpoints/suit_auc_exit2_fast.bin:nfast=checkpoints/nt_auc_dmc8m_fast.bin:sbelief=checkpoints/suit_auc_belief_v2_best.bin:nbelief=checkpoints/nt_auc_belief_v3_best.bin:bdraw:sbt=2.0:nbt=1.0:bw=0.25:pb=0.04:norace" \
-    --b "ben_dds_auc:16:6" --pbn data/eval_bbo_unseen.pbn --threads 16
+    --b "ben_dds_auc:16:6" \
+    --pbn "external/ben/Boards/BBO/Ben & Friends Daily - 2024-07-11 Daylong.pbn" --threads 8
+# Use --b "ben_full_pimc" to pit against BEN's full unmodified upstream config/onnx.conf driver!
 
 # 4. Train from scratch (DMC Q-GRU -> ExIt/Distill FastPolicy -> Dedicated GRU BeliefNet)
 PYTHONPATH=build:python .venv/bin/python -m bridge.train_dmc \
