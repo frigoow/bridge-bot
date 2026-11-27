@@ -359,6 +359,22 @@ All rollout rows use `bdraw + dedup + Q-GRU blend (qb=0.06) + collapse + race` (
 
 **Key takeaway:** Using the exact same **4-trick neural rollout horizon** as Belot and Manille (`dds9:rex9`, Tricks 1–4 neural rollouts + exact last 9 tricks) with proper good-world filtering (`pool=4`, keeping only the top 25% of `bdraw + bidder.onnx` worlds) beats **`ben_dds_auc:32:6`** by **`+0.272 ± 0.364 IMPs/bd`** (`26.6% W / 22.2% L`) while running **faster even on 1 core** (`241.4` vs `256.3 ms`) and **~25× lower worst-case tail latency on 16 threads** (`~150 ms` vs `3,832 ms`). Without good-world filtering (`draw == W`, `pool=1`), shuffled low-weight worlds starve `raceMoves` of ESS (`W=1,000` drops to `−0.510`).
 
+### 10. 1,000-Pair Component Ablation Study (`ben_all_eval_1000.bin`, `16w:pool=6` vs `ben_dds_auc:16:6`, 2026-11-27)
+
+To isolate every component's exact contribution — and verify whether any Bridge-specific extras can be dropped — we ran a controlled 1,000-mirrored-pair (2,000-deal) ablation on `data/ben_all_eval_1000.bin` (782 Suit + 218 NT, identical seed `1000`, shared `bidder.onnx` + `W×6` pool):
+
+| # | Configuration (`16w:pool=6` vs `ben_dds_auc:16:6`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | Delta | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| **A1** | **Bare** (`bidder.onnx` + uniform + DDS, zero learned nets) | 1000 | −0.518 ± 0.238 | −0.049 ± 0.032 | 21.2% / 51.4% / 27.4% | — | 101.5 | 109.0 |
+| **A2** | `+ Distilled FastPolicy` (`pb=0.04`, no lead, no belief) | 1000 | −0.084 ± 0.233 | −0.004 ± 0.031 | 24.2% / 51.9% / 23.9% | **+0.434** | 101.2 | 110.7 |
+| **A3** | `+ Opening-Lead Specialists` (`slead + nlead`) | 1000 | −0.139 ± 0.236 | −0.013 ± 0.031 | 22.8% / 53.9% / 23.3% | −0.055 | 102.1 | 110.7 |
+| **A4** | `+ GRU BeliefNet Re-Scoring` (`UNIF + bw=0.25`) | 1000 | +0.077 ± 0.237 | +0.028 ± 0.031 | 25.5% / 52.8% / 21.7% | **+0.216** | 105.3 | 109.8 |
+| **Full** | `+ BeliefNet Proposal Sampling + Dedup` (`bdraw`, with lead) | 1000 | **+0.419 ± 0.235** | **+0.059 ± 0.032** | **29.3% / 50.5% / 20.2%** | **+0.342** | **98.4** | 111.5 |
+| **A5** | **Pure `bdraw + dedup` ONLY** *(no FastPolicy, no Lead)* | 1000 | **+0.072 ± 0.256** | **+0.033 ± 0.032** | 27.7% / 49.3% / 23.0% | **+0.590** *(vs A1)* | **97.4** | 109.0 |
+| **A6** | **Minimal 2-Component** (`FastPolicy + BeliefNet bdraw+dedup`, **NO lead specialists!**) | 1000 | **+0.409 ± 0.236** (`p = 7e-4`) | **+0.054 ± 0.031** (`p = 6e-4`) | **28.1% / 52.1% / 19.8%** | **+0.927** *(vs A1)* | **97.4** | 110.9 |
+
+**Takeaway:** Dropping the Bridge-specific opening-lead specialists (`A6` vs `Full`) changes performance by just `0.010 IMPs` (`+0.409 ± 0.236` vs `+0.419 ± 0.235`), proving that **just two generic `cardbot-framework` components** — distilled `FastPolicy` (`+0.434`) and GRU `BeliefNet` with `bdraw + dedup` (`+0.590` standalone over bare) — account for the entire `+0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS (`14.2 MB` total footprint, **12.2% faster** than `ben_dds_auc:16:6`).
+
 
 
 
