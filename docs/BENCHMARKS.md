@@ -372,8 +372,9 @@ To isolate every component's exact contribution — and verify whether any Bridg
 | **Full** | `+ BeliefNet Proposal Sampling + Dedup` (`bdraw`, with lead) | 1000 | **+0.419 ± 0.235** | **+0.059 ± 0.032** | **29.3% / 50.5% / 20.2%** | **+0.342** | **98.4** | 111.5 |
 | **A5** | **Pure `bdraw + dedup` ONLY** *(no FastPolicy, no Lead)* | 1000 | **+0.072 ± 0.256** | **+0.033 ± 0.032** | 27.7% / 49.3% / 23.0% | **+0.590** *(vs A1)* | **97.4** | 109.0 |
 | **A6** | **Minimal 2-Component** (`FastPolicy + BeliefNet bdraw+dedup`, **NO lead specialists!**) | 1000 | **+0.409 ± 0.236** (`p = 7e-4`) | **+0.054 ± 0.031** (`p = 6e-4`) | **28.1% / 52.1% / 19.8%** | **+0.927** *(vs A1)* | **97.4** | 110.9 |
+| **A7** | **Minimal 2-Component + Single Shared Temp (`bt=1.5`)** *(NO lead, NO per-strain temp!)* | 1000 | **+0.388 ± 0.251** (`p = 2.4e-3`) | **+0.060 ± 0.031** (`p = 1.5e-4`) | **29.4% / 50.5% / 20.1%** | **+0.906** *(vs A1)* | **97.3** | 111.9 |
 
-**Takeaway:** Dropping the Bridge-specific opening-lead specialists (`A6` vs `Full`) changes performance by just `0.010 IMPs` (`+0.409 ± 0.236` vs `+0.419 ± 0.235`), proving that **just two generic `cardbot-framework` components** — distilled `FastPolicy` (`+0.434`) and GRU `BeliefNet` with `bdraw + dedup` (`+0.590` standalone over bare) — account for the entire `+0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS (`14.2 MB` total footprint, **12.2% faster** than `ben_dds_auc:16:6`).
+**Takeaway:** Dropping both the Bridge-specific opening-lead specialists (`A6`) and per-strain belief temperatures (`A7`, single `bt=1.5`) preserves the full gain (**`+0.388 ± 0.251 IMPs`, `+0.060 ± 0.031 trk`, `29.4% W / 20.1% L`, 13.1% faster**), proving that **just two generic `cardbot-framework` components** — distilled `FastPolicy` (`+0.434`) and GRU `BeliefNet` with `bdraw + dedup` (`+0.590` standalone over bare) — account for the entire `+0.91–0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS (`14.2 MB` total footprint).
 
 
 
