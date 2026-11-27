@@ -110,10 +110,30 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.policy_blend = std::stod(p.substr(3));
         } else if (p.rfind("bt=", 0) == 0) {
             o.belief_temp = std::stod(p.substr(3));
+        } else if (p.rfind("sbt=", 0) == 0) {
+            o.suit_belief_temp = std::stod(p.substr(4));
+        } else if (p.rfind("nbt=", 0) == 0) {
+            o.nt_belief_temp = std::stod(p.substr(4));
         } else if (p.rfind("bw=", 0) == 0) {
             o.belief_weight = std::stod(p.substr(3));
         } else if (p.rfind("pool=", 0) == 0) {
             o.pool = std::stoi(p.substr(5));
+        } else if (p.rfind("draw=", 0) == 0) {
+            o.draw = std::stoi(p.substr(5));
+        } else if (p.rfind("rmin=", 0) == 0) {
+            o.race_min = std::stoi(p.substr(5));
+        } else if (p.rfind("rstep=", 0) == 0) {
+            o.race_step = std::stoi(p.substr(6));
+        } else if (p.rfind("rz=", 0) == 0) {
+            o.race_z = std::stod(p.substr(3));
+        } else if (p == "collapse") {
+            o.collapse_touching = true;
+        } else if (p == "nocollapse") {
+            o.collapse_touching = false;
+        } else if (p == "bdraw") {
+            o.belief_draw = true;
+        } else if (p == "imp") {
+            o.imp_objective = true;
         } else if (p.rfind("belief=", 0) == 0) {
             o.belief_model = loadBelief(p.substr(7));
         } else if (p.rfind("sbelief=", 0) == 0) {
@@ -194,16 +214,35 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
 
     if (kind == "fast") {
         if (parts.size() < 2) throw std::invalid_argument("fast:<path>");
-        auto model = loadFast(spec.substr(5));
-        return [model](const BridgeGame& g, std::mt19937_64&) {
+        std::shared_ptr<const cardbot::FastPolicyModel> unified, sm, nm, sl, nl;
+        bool kv = false;
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            const std::string& p = parts[i];
+            if (p.rfind("s=", 0) == 0) { sm = loadFast(p.substr(2)); kv = true; }
+            else if (p.rfind("n=", 0) == 0) { nm = loadFast(p.substr(2)); kv = true; }
+            else if (p.rfind("sl=", 0) == 0) { sl = loadFast(p.substr(3)); kv = true; }
+            else if (p.rfind("nl=", 0) == 0) { nl = loadFast(p.substr(3)); kv = true; }
+        }
+        if (!kv) unified = loadFast(spec.substr(5));
+        return [unified, sm, nm, sl, nl](const BridgeGame& g, std::mt19937_64&) {
             const auto legal = g.legalActions();
             if (legal.size() == 1) return legal[0];
+            const int strain = g.contract().strain;
+            const cardbot::FastPolicyModel* model = nullptr;
+            if (g.nPlies() == 0) {
+                if (strain == kNT && nl) model = nl.get();
+                else if (strain != kNT && sl) model = sl.get();
+            }
+            if (!model) {
+                if (strain == kNT && nm) model = nm.get();
+                else if (strain != kNT && sm) model = sm.get();
+                else model = unified.get();
+            }
             thread_local std::vector<float> state(kBridgeAucStateDim), logits;
             state.resize(std::size_t(model->stateDim()));
             logits.resize(std::size_t(model->outDim()));
             encodeBridgeStateForDim(g, g.toMove(), model->stateDim(), state.data(), nullptr);
             model->forward(state.data(), logits.data());
-            const int strain = g.contract().strain;
             int best = legal[0];
             float best_l = -1e30f;
             for (int c : legal) {
@@ -216,10 +255,21 @@ cardbot::Agent<BridgeGame> makeAgent(const std::string& spec) {
 
     if (kind == "qgru") {
         if (parts.size() < 2) throw std::invalid_argument("qgru:<path>");
-        auto model = loadQGru(spec.substr(5));
-        return [model](const BridgeGame& g, std::mt19937_64&) {
+        std::shared_ptr<const cardbot::QGruModel> unified, sm, nm;
+        bool kv = false;
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            const std::string& p = parts[i];
+            if (p.rfind("s=", 0) == 0) { sm = loadQGru(p.substr(2)); kv = true; }
+            else if (p.rfind("n=", 0) == 0) { nm = loadQGru(p.substr(2)); kv = true; }
+        }
+        if (!kv) unified = loadQGru(spec.substr(5));
+        return [unified, sm, nm](const BridgeGame& g, std::mt19937_64&) {
             const auto legal = g.legalActions();
             if (legal.size() == 1) return legal[0];
+            const int strain = g.contract().strain;
+            const cardbot::QGruModel* model = (strain == kNT && nm) ? nm.get()
+                                            : (strain != kNT && sm) ? sm.get()
+                                                                    : unified.get();
             thread_local std::vector<float> state(kBridgeAucStateDim), hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
             state.resize(std::size_t(model->stateDim()));
             const int np = encodeBridgeStateForDim(g, g.toMove(), model->stateDim(), state.data(), hist.data());

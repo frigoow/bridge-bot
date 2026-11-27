@@ -46,7 +46,7 @@ def eval_belief_world_rank(belief_bin: Path, eval_deals_path: str, actor_fast_bi
 
     games = bridge_cpp.load_ben_deals(eval_deals_path, n_games)
     nn = BenOnnxPlayer(threads=1)
-    srch = bridge_cpp.SearchOnWorlds(f"search:16:pool=6:sbelief={belief_bin}")
+    srch = bridge_cpp.SearchOnWorlds(f"search:16:pool=6:belief={belief_bin}")
     ag = bridge_cpp.Agent(f"fast:{actor_fast_bin}", 1)
 
     pct_b, pct_c, top16_c = [], [], []

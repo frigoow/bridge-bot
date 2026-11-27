@@ -168,6 +168,8 @@ def load_state_dict_expand(model: torch.nn.Module, path: str) -> None:
 def make_env(mode: str, envs: int, seed: int, threads: int):
     if mode == "suit_auc":
         return bridge_cpp.SuitAucBatchEnv(envs, seed=seed, threads=threads), 0
+    if mode == "nt_auc":
+        return bridge_cpp.NtAucBatchEnv(envs, seed=seed, threads=threads), 1
     if mode == "suit":
         return bridge_cpp.SuitBatchEnv(envs, seed=seed, threads=threads), 0
     if mode == "nt":
@@ -177,7 +179,7 @@ def make_env(mode: str, envs: int, seed: int, threads: int):
 
 def main():
     ap = argparse.ArgumentParser(description="Train Bridge QGRU (+ optional BeliefNet) with DMC")
-    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc"], default="all")
+    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc", "nt_auc"], default="all")
     ap.add_argument("--ben-deals", type=str, default=None, help="BDP1 binary pool of BEN-bid deals for suit_auc")
     ap.add_argument("--eval-ben-deals", type=str, default=None, help="BDP1 binary eval set for ben_nn_auc evals")
     ap.add_argument("--episodes", type=int, default=1_000_000)

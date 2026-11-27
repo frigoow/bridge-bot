@@ -83,16 +83,40 @@ def make_player_factory(spec: str):
                 step[0] += 1
                 c = game.contract()
                 do_auc = c.has_auction() and (nn.bidder is not None)
-                n_draw = w_cnt * pool if do_auc else w_cnt
-                worlds = bridge_cpp.sample_worlds(game, n_draw, seed * 1000003 + step[0])
+                n_draw = srch.draw if srch.draw > 0 else (w_cnt * pool if do_auc else w_cnt)
+                enumerated = False
+                used_bdraw = False
+                if srch.belief_draw and game.n_plies() > 0:
+                    worlds, enumerated = srch.sample_worlds_belief(game, n_draw, seed * 1000003 + step[0])
+                    used_bdraw = not enumerated
+                else:
+                    worlds = bridge_cpp.sample_worlds(game, n_draw, seed * 1000003 + step[0])
                 if not worlds:
                     return legal[0]
+                log_mult = None
+                if used_bdraw and len(worlds) > 1:
+                    uniq_map: dict[tuple[int, int, int, int], int] = {}
+                    u_worlds = []
+                    counts = []
+                    for wg in worlds:
+                        key = (wg.hand(0), wg.hand(1), wg.hand(2), wg.hand(3))
+                        idx = uniq_map.get(key)
+                        if idx is None:
+                            uniq_map[key] = len(u_worlds)
+                            u_worlds.append(wg)
+                            counts.append(1)
+                        else:
+                            counts[idx] += 1
+                    worlds = u_worlds
+                    log_mult = np.log(np.asarray(counts, dtype=np.float64))
                 if do_auc:
                     ll_tot = 0.45 * nn.score_worlds_auction(game, worlds)
                 else:
                     ll_tot = np.zeros(len(worlds), dtype=np.float64)
+                if log_mult is not None:
+                    ll_tot = ll_tot + log_mult
                 if game.n_plies() > 0:
-                    if srch.belief_weight > 0.0:
+                    if srch.belief_weight > 0.0 and not used_bdraw:
                         ll_tot = ll_tot + srch.belief_weight * np.asarray(
                             srch.score_worlds_belief(game, worlds), dtype=np.float64
                         )
@@ -100,9 +124,9 @@ def make_player_factory(spec: str):
                         ll_tot = ll_tot + srch.pre_lik_weight * np.asarray(
                             srch.score_worlds_fast_lik(game, worlds), dtype=np.float64
                         )
-                if do_auc or (game.n_plies() > 0 and (srch.belief_weight > 0.0 or srch.pre_lik_weight > 0.0)):
+                if do_auc or log_mult is not None or (game.n_plies() > 0 and (srch.belief_weight > 0.0 or srch.pre_lik_weight > 0.0)):
                     if len(worlds) > w_cnt:
-                        top_idx = np.argsort(ll_tot)[-w_cnt:]
+                        top_idx = np.argsort(ll_tot)[-w_cnt:][::-1]
                         worlds = [worlds[int(i)] for i in top_idx]
                         ll_top = ll_tot[top_idx]
                     else:
@@ -112,7 +136,7 @@ def make_player_factory(spec: str):
                     wts = (wts / float(wts.sum())).tolist()
                 else:
                     wts = [1.0 / len(worlds)] * len(worlds)
-                return srch.act(game, worlds, wts, False)
+                return srch.act(game, worlds, wts, enumerated)
 
             return act
 

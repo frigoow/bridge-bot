@@ -25,9 +25,13 @@ namespace bridge {
 struct SearchOptions {
     int worlds = 32;
     int pool = 3;
+    int draw = 0;                 // > 0: fixed external pool draw count (decouples bidder.onnx pool from rollout W)
     int endgame_tricks = 6;       // hand play-out off to exact DDS when <= this many tricks remain (0: play to end)
     int root_exact_tricks = 6;    // solve root directly with DDS on each world when <= this many tricks remain
     bool use_dds_endgame = true;  // true: Bo Haglund's DDS; false: cardbot::EndgameSolver
+    bool imp_objective = false;   // true: rank moves by E[-impFromDiff(opt(w) - ds(m, w))] instead of raw E[ds]
+    bool collapse_touching = false;  // collapse equivalent touching legal cards during rollouts (~2x faster)
+    bool belief_draw = false;     // draw external proposal worlds from BeliefModel via sampleWeighted
     bool race = true;
     int race_min = 16;
     int race_step = 16;
@@ -38,6 +42,8 @@ struct SearchOptions {
     double policy_blend = 0.0;    // weight on FastPolicy softmax probs in raceMoves (e.g. 0.04 -> ~20 pts)
     int q_taper_trick = 9;        // linearly taper q_blend to 0 by this 1-based trick
     double belief_temp = 1.0;
+    double suit_belief_temp = 0.0; // > 0: override belief_temp on Suit contracts
+    double nt_belief_temp = 0.0;   // > 0: override belief_temp on NT contracts
     double belief_weight = 0.0;   // > 0: weight external worlds by BeliefModel log-prob during pre-filtering
     double fast_lik_weight = 0.0; // > 0: weight worlds by FastPolicy log-likelihood of hidden seats' past plays
     double pre_lik_weight = 0.0;  // > 0: weight external candidate pool by FastPolicy play-likelihood BEFORE top-W selection
@@ -88,6 +94,10 @@ std::vector<double> scoreWorldsBelief(const BridgeGame& g, const std::vector<Bri
 /** Score candidate worlds by FastPolicy Bayesian play-likelihood of hidden seats' past plays. */
 std::vector<double> scoreWorldsFastLik(const BridgeGame& g, const std::vector<BridgeGame>& worlds,
                                        const SearchOptions& opt);
+
+/** Sample candidate worlds using BeliefModel marginals (or exact enumeration when <= count). */
+std::vector<BridgeGame> sampleWorldsBelief(const BridgeGame& g, int count, const SearchOptions& opt,
+                                           std::uint64_t seed, bool* out_enumerated = nullptr);
 
 cardbot::Agent<BridgeGame> searchAgent(SearchOptions opt = {});
 

@@ -44,6 +44,12 @@ const cardbot::BeliefModel* pickBelief(const SearchOptions& opt, int strain) {
     return nullptr;
 }
 
+double pickBeliefTemp(const SearchOptions& opt, int strain) {
+    if (strain == kNT && opt.nt_belief_temp > 0.0) return opt.nt_belief_temp;
+    if (strain != kNT && opt.suit_belief_temp > 0.0) return opt.suit_belief_temp;
+    return opt.belief_temp;
+}
+
 int fastPolicyCard(const cardbot::FastPolicyModel& model, const BridgeGame& g) {
     const auto legal = g.legalActions();
     if (legal.size() == 1) return legal[0];
@@ -87,6 +93,41 @@ double playOutValue(BridgeGame g, int seat, const cardbot::FastPolicyModel* fast
         g.apply(card);
     }
     return g.payoff(seat);
+}
+
+// Group touching equivalent legal cards: two legal cards c1 < c2 of the same suit
+// are strategically equivalent if every rank strictly between them has already been
+// played in a completed trick (or is held by `seat` itself). Returns group_id[i]
+// (index of the first card in legal belonging to the same group).
+std::vector<int> touchingGroups(const BridgeGame& g, int seat, const std::vector<int>& legal) {
+    Mask completed_played = 0;
+    const int n_done = (g.nPlies() / 4) * 4;
+    const auto& hist = g.history();
+    for (int p = 0; p < n_done; ++p) {
+        completed_played |= bit(int(hist[std::size_t(p)].card));
+    }
+    const Mask all52 = (Mask(1) << kCards) - 1;
+    const Mask other_unplayed = all52 & ~(completed_played | g.hand(seat));
+
+    std::vector<int> group(legal.size(), 0);
+    for (std::size_t i = 0; i < legal.size(); ++i) {
+        group[i] = int(i);
+        if (i == 0) continue;
+        const int prev = legal[i - 1];
+        const int cur = legal[i];
+        if (suitOf(prev) == suitOf(cur)) {
+            // Check if any rank strictly between prev and cur is in other_unplayed
+            bool sep = false;
+            for (int c = prev + 1; c < cur; ++c) {
+                if (other_unplayed & bit(c)) {
+                    sep = true;
+                    break;
+                }
+            }
+            if (!sep) group[i] = group[i - 1];
+        }
+    }
+    return group;
 }
 
 struct BridgeWorldSource {
@@ -326,7 +367,7 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
             for (int k = 0; k < 3; ++k) marg_in[std::size_t(cc * 3 + k)] = float(m_raw[std::size_t(c)][std::size_t(k)]);
         }
         std::vector<float> probs(kCards * 3, 0.0f);
-        bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(opt.belief_temp));
+        bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(pickBeliefTemp(opt, strain)));
         for (int c = 0; c < kCards; ++c) {
             const int cc = canonCard(c, strain);
             for (int k = 0; k < 3; ++k) src.belief_weights[std::size_t(c)][std::size_t(k)] = double(probs[std::size_t(cc * 3 + k)]);
@@ -369,6 +410,8 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
     const std::size_t nw = ws.states.size();
     const bool seat_is_decl = (g.team(seat) == g.contract().declarerTeam());
     const int rem_total = g.tricksRemaining();
+    const auto tgroup = (opt.collapse_touching && !root_exact) ? touchingGroups(g, seat, legal)
+                                                               : std::vector<int>{};
 
     auto eval_world = [&](std::size_t w, const std::vector<char>& alive, std::vector<double>& val) {
         if (root_exact && opt.use_dds_endgame) {
@@ -387,9 +430,37 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
                     by_card[std::size_t(ms.card)] = seat_is_decl ? double(ds) : double(-ds);
                 }
             }
+            if (opt.imp_objective && g.payoffMode() != BridgeGame::PayoffMode::kTricks) {
+                double best_ds = -1e30;
+                for (std::size_t i = 0; i < legal.size(); ++i)
+                    if (by_card[std::size_t(legal[i])] > best_ds) best_ds = by_card[std::size_t(legal[i])];
+                for (std::size_t i = 0; i < legal.size(); ++i) {
+                    if (!alive[i]) continue;
+                    const int loss = int(std::llround(best_ds - by_card[std::size_t(legal[i])]));
+                    val[i * nw + w] = -double(impFromDiff(loss)) - 1e-6 * double(rankOf(legal[i]));
+                }
+                return;
+            }
             for (std::size_t i = 0; i < legal.size(); ++i) {
                 if (!alive[i]) continue;
                 val[i * nw + w] = by_card[std::size_t(legal[i])] - 1e-6 * double(rankOf(legal[i]));
+            }
+            return;
+        }
+        if (!tgroup.empty()) {
+            std::array<double, kCards> gval{};
+            std::array<char, kCards> gdone{};
+            for (std::size_t i = 0; i < legal.size(); ++i) {
+                if (!alive[i]) continue;
+                const int gi = tgroup[i];
+                if (!gdone[std::size_t(gi)]) {
+                    BridgeGame next = ws.states[w];
+                    next.apply(legal[i]);
+                    gval[std::size_t(gi)] =
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                    gdone[std::size_t(gi)] = 1;
+                }
+                val[i * nw + w] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
             }
             return;
         }
@@ -425,7 +496,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
             }
             qb.weight = w_tot;
             qb.center = true;
-            qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks) ? 6.5 : 500.0;
+            qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks)
+                           ? 6.5
+                           : (opt.imp_objective ? 10.0 : 500.0);
         }
     }
 
@@ -573,6 +646,8 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     const bool root_exact = (opt.root_exact_tricks > 0 && g.tricksRemaining() <= opt.root_exact_tricks);
     const bool seat_is_decl = (g.team(seat) == g.contract().declarerTeam());
     const int rem_total = g.tricksRemaining();
+    const auto tgroup = (opt.collapse_touching && !root_exact) ? touchingGroups(g, seat, legal)
+                                                               : std::vector<int>{};
 
     auto eval_world = [&](std::size_t w, const std::vector<char>& alive, std::vector<double>& val) {
         if (root_exact && opt.use_dds_endgame) {
@@ -590,9 +665,37 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
                     by_card[std::size_t(ms.card)] = seat_is_decl ? double(ds) : double(-ds);
                 }
             }
+            if (opt.imp_objective && g.payoffMode() != BridgeGame::PayoffMode::kTricks) {
+                double best_ds = -1e30;
+                for (std::size_t i = 0; i < legal.size(); ++i)
+                    if (by_card[std::size_t(legal[i])] > best_ds) best_ds = by_card[std::size_t(legal[i])];
+                for (std::size_t i = 0; i < legal.size(); ++i) {
+                    if (!alive[i]) continue;
+                    const int loss = int(std::llround(best_ds - by_card[std::size_t(legal[i])]));
+                    val[i * nw + w] = -double(impFromDiff(loss)) - 1e-6 * double(rankOf(legal[i]));
+                }
+                return;
+            }
             for (std::size_t i = 0; i < legal.size(); ++i) {
                 if (!alive[i]) continue;
                 val[i * nw + w] = by_card[std::size_t(legal[i])] - 1e-6 * double(rankOf(legal[i]));
+            }
+            return;
+        }
+        if (!tgroup.empty()) {
+            std::array<double, kCards> gval{};
+            std::array<char, kCards> gdone{};
+            for (std::size_t i = 0; i < legal.size(); ++i) {
+                if (!alive[i]) continue;
+                const int gi = tgroup[i];
+                if (!gdone[std::size_t(gi)]) {
+                    BridgeGame next = worlds[w];
+                    next.apply(legal[i]);
+                    gval[std::size_t(gi)] =
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                    gdone[std::size_t(gi)] = 1;
+                }
+                val[i * nw + w] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
             }
             return;
         }
@@ -628,7 +731,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
             }
             qb.weight = w_tot;
             qb.center = true;
-            qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks) ? 6.5 : 500.0;
+            qb.slope = (g.payoffMode() == BridgeGame::PayoffMode::kTricks)
+                           ? 6.5
+                           : (opt.imp_objective ? 10.0 : 500.0);
         }
     }
 
@@ -640,7 +745,53 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
     ro.z = opt.z;
     ro.margin = opt.margin;
 
-    const auto rr = cardbot::raceMoves<int>(legal, wts, enumerated, root_exact, prior, eval_world, qb, ro);
+    // When racing on externally ordered worlds (e.g. argsort-ascending by likelihood),
+    // permute worlds deterministically so Stage 1 is an unbiased sample of the posterior.
+    std::vector<std::size_t> order(nw);
+    for (std::size_t i = 0; i < nw; ++i) order[i] = i;
+    std::vector<double> rwts = wts;
+    if (ro.race && nw > 1) {
+        auto h64 = [](std::size_t x) -> std::uint64_t {
+            std::uint64_t z = (static_cast<std::uint64_t>(x) + 1ULL) * 0x9e3779b97f4a7c15ULL;
+            z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+            return z ^ (z >> 31);
+        };
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return h64(a) < h64(b); });
+        for (std::size_t i = 0; i < nw; ++i) rwts[i] = wts[order[i]];
+    }
+    auto eval_ordered = [&](std::size_t wi, const std::vector<char>& alive, std::vector<double>& val) {
+        if (!ro.race || nw <= 1) {
+            eval_world(wi, alive, val);
+            return;
+        }
+        const std::size_t orig = order[wi];
+        if (!tgroup.empty()) {
+            std::array<double, kCards> gval{};
+            std::array<char, kCards> gdone{};
+            for (std::size_t i = 0; i < legal.size(); ++i) {
+                if (!alive[i]) continue;
+                const int gi = tgroup[i];
+                if (!gdone[std::size_t(gi)]) {
+                    BridgeGame next = worlds[orig];
+                    next.apply(legal[i]);
+                    gval[std::size_t(gi)] =
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                    gdone[std::size_t(gi)] = 1;
+                }
+                val[i * nw + wi] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
+            }
+            return;
+        }
+        for (std::size_t i = 0; i < legal.size(); ++i) {
+            if (!alive[i]) continue;
+            BridgeGame next = worlds[orig];
+            next.apply(legal[i]);
+            val[i * nw + wi] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+        }
+    };
+
+    const auto rr = cardbot::raceMoves<int>(legal, rwts, enumerated, root_exact, prior, eval_ordered, qb, ro);
     out.card = rr.move;
     out.overruled = rr.overruled;
     out.worlds = rr.worlds;
@@ -674,7 +825,7 @@ std::vector<double> scoreWorldsBelief(const BridgeGame& g, const std::vector<Bri
         for (int k = 0; k < 3; ++k) marg_in[std::size_t(cc * 3 + k)] = float(m_raw[std::size_t(c)][std::size_t(k)]);
     }
     std::vector<float> probs(kCards * 3, 0.0f);
-    bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(opt.belief_temp));
+    bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(pickBeliefTemp(opt, strain)));
 
     // Precompute log P(card c -> hidden slot k) for all 52 cards (uncertain cards only)
     std::array<std::array<double, 3>, kCards> logp{};
@@ -764,6 +915,57 @@ std::vector<double> scoreWorldsFastLik(const BridgeGame& g, const std::vector<Br
         pll[w] = ll;
     }
     return pll;
+}
+
+std::vector<BridgeGame> sampleWorldsBelief(const BridgeGame& g, int count, const SearchOptions& opt,
+                                           std::uint64_t seed, bool* out_enumerated) {
+    if (out_enumerated) *out_enumerated = false;
+    const int seat = g.toMove();
+    const int strain = g.contract().strain;
+    const Observation obs = g.observe(seat);
+    const BridgeSampler sampler(obs);
+    const int n = std::max(1, count);
+    const double tot = sampler.count();
+    std::vector<std::array<Mask, 4>> hands;
+    if (tot > 0.0 && tot <= double(n)) {
+        hands = sampler.enumerate(std::uint64_t(n));
+        if (out_enumerated) *out_enumerated = true;
+    } else {
+        const auto* bnet = pickBelief(opt, strain);
+        std::mt19937_64 rng(seed);
+        hands.reserve(std::size_t(n));
+        if (bnet && bnet->numCards() == kCards && bnet->numSeats() == 3) {
+            const auto m_raw = sampler.cardMarginals();
+            std::vector<float> state(std::size_t(bnet->stateDim()));
+            std::vector<float> hist(std::size_t(kBridgeMaxPlies) * kBridgePlyDim);
+            const int np = encodeBridgeStateForDim(g, seat, bnet->stateDim(), state.data(), hist.data());
+            std::vector<float> marg_in(kCards * 3, 0.0f);
+            for (int c = 0; c < kCards; ++c) {
+                const int cc = canonCard(c, strain);
+                for (int k = 0; k < 3; ++k)
+                    marg_in[std::size_t(cc * 3 + k)] = float(m_raw[std::size_t(c)][std::size_t(k)]);
+            }
+            std::vector<float> probs(kCards * 3, 0.0f);
+            bnet->forwardProbs(state.data(), hist.data(), np, marg_in.data(), probs.data(), float(pickBeliefTemp(opt, strain)));
+            std::array<std::array<double, 3>, kCards> bw{};
+            for (int c = 0; c < kCards; ++c) {
+                const int cc = canonCard(c, strain);
+                for (int k = 0; k < 3; ++k)
+                    bw[std::size_t(c)][std::size_t(k)] = double(probs[std::size_t(cc * 3 + k)]);
+            }
+            for (int i = 0; i < n; ++i) {
+                if (auto h = sampler.sampleWeighted(rng, bw)) hands.push_back(*h);
+            }
+        } else {
+            for (int i = 0; i < n; ++i) {
+                if (auto h = sampler.sample(rng)) hands.push_back(*h);
+            }
+        }
+    }
+    std::vector<BridgeGame> worlds;
+    worlds.reserve(hands.size());
+    for (const auto& h : hands) worlds.push_back(g.withRemainingHands(h));
+    return worlds;
 }
 
 cardbot::Agent<BridgeGame> searchAgent(SearchOptions opt) {

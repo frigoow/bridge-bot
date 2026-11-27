@@ -252,6 +252,73 @@ Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (eliminating bid
 | **`shared_auc+16w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet v2 bw=0.25, pb=0.04`)** vs **`ben_dds_auc:16:6`** | **1000** | **+0.05 ± 0.22** | **+0.010 ± 0.027** | **23.8% / 54.8% / 21.4%** | **105.52** | 110.74 |
 | **`shared_auc+32w:pool=6:dds13:rex13` (`slead + exit2_fast + BeliefNet v2 bw=0.25, pb=0.04`)** vs **`ben_dds_auc:32:6`** | **1000** | **+0.13 ± 0.20** | **+0.035 ± 0.025** | **23.2% / 58.4% / 18.4%** | **201.81** | 214.62 |
 
+### 6. High-`W` Manille-Style Neural Rollout + Endgame DDS Handoff Scaling (`collapse`, `bdraw`, compact `FastPolicy`, unbiased racing, 2026-11-26)
+
+To directly test the Manille-style rollout + late exact handoff paradigm on 52-card Bridge (zero 13-trick DDS on Tricks 1–5), we added touching-card equivalence collapsing (`:collapse`), sparse-ReLU SAXPY in `cardbot::FastPolicyModel`, Belief-guided world proposals (`:bdraw`), decoupled external pool sizing (`:draw=N`), unbiased deterministic world permutation for `raceMoves`, and distilled compact `256×128` (`741 KB`, 52.1% top-1 vs `suit_auc_exit2_q`) and `128×64` (`339 KB`, 51.6% top-1) rollout policies.
+
+Monotonic world-count scaling on **200 strictly unseen BEN-bid Trump pairs** (`data/ben_suit_eval_1000.bin`, `seed=1`, `threads=16`, shared `bidder.onnx`):
+
+| A vs `ben_dds_auc:16:6` (200 unseen BEN-bid Trump pairs) | Rollout Net | Handoff | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| `shared_auc+64w` (`draw=192, bw=0.25`) | `512×256` | `dds8:rex8` | 200 | −0.425 ± 0.459 | −0.077 ± 0.061 | 19.0% / 52.5% / 28.5% | **112.4** | 122.9 |
+| `shared_auc+64w` (`draw=192, bdraw:bt=2.5`) | `512×256` | `dds8:rex8` | 200 | −0.315 ± 0.471 | −0.077 ± 0.073 | 21.5% / 51.0% / 27.5% | **107.0** | 122.5 |
+| `shared_auc+128w` (`draw=384, bw=0.25`) | `256×128` | `dds8:rex8` | 200 | −0.200 ± 0.511 | −0.052 ± 0.071 | 25.5% / 41.5% / 33.0% | 192.1 | 135.6 |
+| **`shared_auc+128w` (`draw=384, bw=0.25`)** | **`256×128`** | **`dds9:rex9`** | **200** | **+0.035 ± 0.519** | −0.048 ± 0.068 | 27.5% / 43.0% / 29.5% | 238.4 | 131.5 |
+| **`shared_auc+256w` (`draw=512, bw=0.25`)** | **`128×64`** | **`dds8:rex8`** | **200** | **+0.035 ± 0.489** | −0.040 ± 0.066 | 26.0% / 43.5% / 30.5% | 294.6 | 135.2 |
+
+### 7. Full Auction-Aware No-Trump (`nt_auc`, `585`-dim `BridgeNtAucEncoder`, 2026-11-26–27)
+
+Applied the exact same 5-stage pipeline to No-Trump (`scripts/train_nt_auc.sh`, trained on 500,000 BEN-bid NT deals `data/ben_nt_train_500k.bin` with **24× all-suit symmetry**, evaluated on 1,000 strictly unseen BEN-bid NT deals `data/ben_nt_eval_1000.bin`):
+- **Stage 1 (`nt_auc_dmc8m_best_ben.bin`, 8M warm-started DMC deals):** Beat full auction-aware `ben_nn_auc` standalone (zero search!) by **`+0.877 ± 0.336 IMPs/bd` (`p < 1e-6`)** and **`+0.088 ± 0.050 trk/bd` (`p = 0.0006`)**.
+- **Stage 2 (`nt_auc_exit2_q` + direct distillation `nt_auc_dmc8m_fast`):** Direct `512→256` distillation from `nt_auc_dmc8m_best_ben.pt` (73.8% top-1 agreement) jumped standalone `FastPolicy` by `+0.761 IMPs/bd` over `nt_auc_exit2_fast` (`−0.240 → +0.521 ± 0.333 IMPs/bd`, **`p = 0.002`**, **2.3× faster than `ben_nn_auc`**).
+- **Stage 3 (`nt_auc_lead_fast.bin`, 100k exact DD NT leads × 24× sym):** Beat BEN's `lead_nt.onnx` across all 1,000 unseen NT opening leads (**`0.3050` trk / `33.86` dup pts lost** vs BEN's `0.3090` trk / `34.46` dup pts lost).
+- **Stage 4 (`nt_auc_belief_v2` → `nt_auc_belief_v3`, dedicated `384→192` GRU `BeliefNet`):**
+  - `nt_auc_belief_v2` (trained on weaker `nt_auc_exit2_fast`, 2M deals): lifted unseen NT top-16 true-world inclusion from `54.87%` (`bidder.onnx` alone) → **`78.50%` (+23.63 pp)**, rank `75.32% → 87.22%`.
+  - **`nt_auc_belief_v3_best`** (retrained on strong `+0.521` `nt_auc_dmc8m_fast` + `nt_auc_lead_fast`, plateaued at 819k–1.02M deals): lifted unseen NT top-16 inclusion further to **`88.75%` (+33.88 pp over BEN, +10.25 pp over v2!)** and rank to **`92.31%`** (`bel_only = 88.03%`).
+
+| A vs B (1,000 strictly unseen BEN-bid NT pairs, `seed=1000`) | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---:|---:|---:|---:|---:|---:|
+| **`qgru:nt_auc_dmc8m_best_ben.bin`** *(585-dim DMC, zero search!)* vs **`ben_nn_auc`** | 1000 | **+0.877 ± 0.336** | **+0.088 ± 0.050** | **39.0% / 28.5% / 32.5%** | 6.03 | 5.68 |
+| `qgru:nt_auc_exit2_q.bin` *(ExIt2 QGRU, zero search)* vs `ben_nn_auc` | 1000 | **+0.345 ± 0.324** | +0.034 ± 0.047 | 35.3% / 32.8% / 31.9% | 6.03 | 5.69 |
+| `fast:nt_auc_exit2_fast.bin` *(512→256, zero search)* vs `ben_nn_auc` | 1000 | −0.240 ± 0.324 | −0.044 ± 0.046 | 30.2% / 33.8% / 36.0% | **1.92** | 4.49 |
+| **`fast:nt_auc_dmc8m_fast.bin`** *(512→256 distilled, zero search!)* vs **`ben_nn_auc`** | 1000 | **+0.521 ± 0.333** | **+0.064 ± 0.049** | **36.0% / 32.2% / 31.8%** | **2.00** | 4.56 |
+| `shared_auc+16w:pool=6` *(UNIF + `bw=0.25`, `v2`, `nt_auc_dmc8m_fast`)* vs `ben_dds_auc:16:6` | 1000 | +0.120 ± 0.266 | +0.030 ± 0.039 | 30.0% / 43.1% / 26.9% | **115.3** | 119.6 |
+| `shared_auc+32w:pool=6` *(UNIF + `bw=0.25`, `v2`, `nt_auc_dmc8m_fast`)* vs `ben_dds_auc:32:6` | 1000 | +0.172 ± 0.264 | +0.036 ± 0.038 | 31.7% / 42.8% / 25.5% | **224.2** | 230.2 |
+| `shared_auc+32w:pool=6` *(UNIF + `bw=0.25`, `v2`, `nt_auc_exit2_fast`)* vs `ben_dds_auc:32:6` | 1000 | +0.233 ± 0.257 | +0.023 ± 0.039 | 29.1% / 46.7% / 24.2% | **224.5** | 227.8 |
+
+### 8. Belief-Guided Proposal Sampling (`bdraw` + Multiplicity-Preserving Deduplication) — Definitive All-Strain Showdown (2026-11-27)
+
+Replacing uniform proposal sampling + re-scoring (`UNIF + bw=0.25`) with **BeliefNet proposal sampling (`bdraw`) + exact multiplicity-preserving world deduplication** (`ll_eff = 0.45 * bidder_ll + log(count)`) draws the `W * 6` candidate pool directly from `BeliefNet` (`sbt=2.0` on Suit, `nbt=1.0` on NT; exact enumeration late-game uses `0.45 * bidder_ll + 0.25 * belief_ll`) before `bidder.onnx` selects the top `W` distinct worlds:
+- **World-posterior diagnostic (80 unseen games / 320 states each, `192 → 32` worlds):**
+  - **Suit:** Hidden-card placement accuracy jumped from `57.13%` (BEN uniform) → `58.75%` (`UNIF+bw=0.25`) → **`60.79%` (`bdraw bt=2.0`) / `61.88%` (`bt=1.0`)**, while top-32 mean `0.45 * auc_ll` improved from `−1.970` → **`−0.612`** (`~20×` higher auction likelihood).
+  - **NT:** Hidden-card placement accuracy jumped from `56.10%` (BEN uniform) → `58.46%` (`UNIF+bw=0.25`) → **`60.23%` (`bdraw bt=1.0`)**, while top-32 mean `0.45 * auc_ll` improved from `−1.360` → **`−0.360`** (`~9×` higher auction likelihood).
+- **Zero extra DDS calls, zero extra `bidder.onnx` calls, and 10–16% FASTER than `ben_dds_auc`!**
+
+*(Note on `ben_nn_auc` / `ben_dds_auc`: uses BEN's official unmodified ONNX weights + Bo Haglund DDS in `tools/opponents/ben_player.py` under matched `bidder.onnx` and `W × 6` world budgets, 1 core vs 1 core per deal.)*
+
+**Definitive Strictly Unseen Benchmarks (`sfast=suit_auc_exit2_fast`, `slead=suit_auc_lead_fast`, `sbelief=suit_auc_belief_v2_best`, `nfast=nt_auc_dmc8m_fast`, `nlead=nt_auc_lead_fast`, `nbelief=nt_auc_belief_v3_best`, `bdraw:sbt=2.0:nbt=1.0:bw=0.25:pb=0.04:norace`):**
+
+| Dataset (all strictly unseen, matched `bidder.onnx` & `W×6` pool) | Budget | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **BEN-bid Suit** (`ben_suit_eval_1000.bin`) | `16w:pool=6` | 1000 | **+0.280 ± 0.221** | **+0.055 ± 0.026** | 26.4% / 54.8% / 18.8% | **96.6** | 109.6 |
+| **BEN-bid NT** (`ben_nt_eval_1000.bin`) | `16w:pool=6` | 1000 | **+0.174 ± 0.266** | **+0.056 ± 0.041** | 32.4% / 42.6% / 25.0% | **107.0** | 119.2 |
+| **BEN-bid All-Strain** (`ben_all_eval_1000.bin`, 782 Suit + 218 NT) | `16w:pool=6` | 1000 | **+0.419 ± 0.235** | **+0.059 ± 0.032** | 29.3% / 50.5% / 20.2% | **98.4** | 111.5 |
+| **Real Unseen Human BBO Daylongs** (`eval_bbo_unseen.pbn`, All strains) | `16w:pool=6` | 292 | **+0.562 ± 0.520** | **+0.074 ± 0.065** | 29.5% / 49.7% / 20.9% | **103.8** | 115.8 |
+| **Pooled `16w:pool=6` (all unseen datasets)** | **`16w:pool=6`** | **3292** | **+0.315 ± 0.135** (`p = 4.9e-6`) | **+0.058 ± 0.019** (`p = 8.3e-10`) | **29.4% / 49.3% / 21.3%** | **101.0** | 113.7 |
+| **BEN-bid Suit** (`ben_suit_eval_1000.bin`) | `32w:pool=6` | 1000 | **+0.252 ± 0.207** | **+0.062 ± 0.025** | 25.6% / 57.3% / 17.1% | **189.1** | 225.2 |
+| **BEN-bid NT** (`ben_nt_eval_1000.bin`) | `32w:pool=6` | 1000 | **+0.234 ± 0.260** | **+0.054 ± 0.039** | 31.9% / 44.6% / 23.5% | **206.8** | 233.1 |
+| **BEN-bid All-Strain** (`ben_all_eval_1000.bin`, 782 Suit + 218 NT) | `32w:pool=6` | 1000 | **+0.197 ± 0.232** | **+0.040 ± 0.030** | 26.4% / 54.0% / 19.6% | **186.5** | 215.5 |
+| **Real Unseen Human BBO Daylongs** (`eval_bbo_unseen.pbn`, All strains) | `32w:pool=6` | 292 | **+0.377 ± 0.518** | **+0.072 ± 0.059** | 28.4% / 51.0% / 20.5% | **199.4** | 224.6 |
+| **Pooled `32w:pool=6` (all unseen datasets)** | **`32w:pool=6`** | **3292** | **+0.241 ± 0.131** (`p = 3.3e-4`) | **+0.054 ± 0.018** (`p = 2.0e-9`) | **28.0% / 51.9% / 20.1%** | **194.6** | 224.6 |
+
+Pre-`bdraw` (`UNIF + bw=0.25`, `nt_auc_belief_v2`) reference benchmarks on `ben_all_eval_1000.bin` and `eval_bbo_unseen.pbn`:
+- Standalone All-Strain `qgru:s=suit_auc_exit2_q:n=nt_auc_dmc8m_best_ben` vs `ben_nn_auc` (1,000 pairs): `−0.046 ± 0.302 IMPs/bd`, `−0.015 ± 0.037 trk` (`8.06` vs `7.58 ms`).
+- Standalone All-Strain `fast:s=suit_auc_exit2_fast:n=nt_auc_dmc8m_fast:sl=...:nl=...` vs `ben_nn_auc` (1,000 pairs): `−0.091 ± 0.299 IMPs/bd`, `−0.005 ± 0.038 trk` (`28.9% W / 42.8% T / 28.3% L`, **`3.86` vs `7.80 ms` — 2.0× faster**).
+- `UNIF + bw=0.25` All-Strain `16w:pool=6` vs `ben_dds_auc:16:6` (1,000 pairs): `+0.044 ± 0.234 IMPs/bd`, `+0.022 ± 0.031 trk` (`105.9` vs `110.4 ms`); `32w:pool=6`: `+0.000 ± 0.235 IMPs/bd`, `+0.012 ± 0.029 trk` (`203.1` vs `213.3 ms`).
+- `UNIF + bw=0.25` Real BBO Daylongs `16w:pool=6` (292 pairs): `+0.168 ± 0.526 IMPs/bd`, `+0.015 ± 0.059 trk`; `32w:pool=6`: `+0.408 ± 0.451 IMPs/bd`, `+0.072 ± 0.055 trk` (`215.5` vs `223.4 ms`).
+- Expected-IMP root objective (`:imp`, 500-pair ablation at `16w`, `UNIF+bw=0.25`): NT `+0.180 ± 0.397 IMPs/bd`, Suit `+0.044 ± 0.321 IMPs/bd` (within noise of `E[ds]`).
+
+
 
 
 

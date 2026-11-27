@@ -126,4 +126,22 @@ struct BridgeSuitAucEncoder : BridgeEncoder {
     }
 };
 
+/** Auction-aware No-Trump (NT) specialist encoder (585-dim, draws BEN-bid NT deals from globalBenDealPool). */
+struct BridgeNtAucEncoder : BridgeEncoder {
+    static constexpr int kStateDim = kBridgeAucStateDim;
+    BridgeNtAucEncoder() { strain_filter = 1; }
+
+    BridgeGame newGame(std::mt19937_64& rng) const {
+        if (auto pool = globalBenDealPool(); pool && !pool->deals.empty()) {
+            const std::size_t idx = std::size_t(rng() % pool->deals.size());
+            return pool->deals[idx].toGame(BridgeGame::PayoffMode::kDuplicateScore);
+        }
+        return randomBridgeGame(rng, BridgeGame::PayoffMode::kDuplicateScore, 1);
+    }
+
+    int encode(const BridgeGame& g, int seat, float* state, float* history) const {
+        return encodeBridgeAucState(g, seat, state, history);
+    }
+};
+
 }  // namespace bridge

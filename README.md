@@ -57,16 +57,26 @@ Built purely via the `cardbot-framework` recipe (`ExIt` warm-start → `16M`-dea
 | **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | NT | **+0.66 ± 0.24** | **+0.127 ± 0.049** | **39.2% / 35.5% / 25.3%** | 108.4 vs 87.8 ms |
 | **Matched DDS (`20w:dds13:rex13`)** vs **`ben_dds:16`** | **All** | **+0.45 ± 0.31** | **+0.070 ± 0.035** | **31.6% / 45.3% / 23.1%** | 102.0 vs 89.9 ms |
 
-### Fair Auction-Aware Card-Play Showdown (Shared BEN `bidder.onnx` + `bidinfo.onnx`, 1,000 Unseen BEN-Bid Trump Pairs)
+### Fair Auction-Aware Card-Play Showdown (Shared BEN `bidder.onnx` + `bidinfo.onnx`, Suit + NT + All-Strain + Real BBO)
 
-Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` and identical `W * 6` candidate world budgets, isolating 100% pure card play on 1,000 strictly unseen BEN-bid Trump deals:
+Both sides share BEN's exact GIB `bidder.onnx` + `bidinfo.onnx` (official unmodified BEN ONNX weights + Bo Haglund DDS in `tools/opponents/ben_player.py`) and identical `W * 6` candidate world budgets, isolating 100% pure card play across strictly unseen BEN-bid deals and real unseen human BBO Daylongs (zero BBO in training):
 
-| Our Bot vs Full Auction-Aware BEN (1,000 mirrored pairs) | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
-|---|---:|---:|---:|---:|
-| **Standalone `suit_auc_exit2_q` (`QGRU`, 585-dim, zero search!)** vs **`ben_nn_auc`** | **+0.23 ± 0.27** | **+0.017 ± 0.035** | **28.9% / 43.1% / 28.0%** | 6.0 vs 5.6 ms |
-| **Standalone `suit_auc_exit2_fast` (`512→256`, zero search!)** vs **`ben_nn_auc`** | **+0.13 ± 0.27** | **+0.017 ± 0.032** | **28.4% / 44.5% / 27.1%** | **1.8** vs 4.4 ms |
-| **Matched `16w:pool=6` (`slead + exit2_fast + BeliefNet v2 bw=0.25`)** vs **`ben_dds_auc:16:6`** | **+0.05 ± 0.22** | **+0.010 ± 0.027** | **23.8% / 54.8% / 21.4%** | **105.5** vs 110.7 ms |
-| **Matched `32w:pool=6` (`slead + exit2_fast + BeliefNet v2 bw=0.25`)** vs **`ben_dds_auc:32:6`** | **+0.13 ± 0.20** | **+0.035 ± 0.025** | **23.2% / 58.4% / 18.4%** | **201.8** vs 214.6 ms |
+| Our Bot vs Auction-Aware BEN (`ben_nn_auc` / `ben_dds_auc`) | Dataset / Strain | Pairs | IMPs/board | Tricks/board | Win / Tie / Loss | Speed (ours vs opp) |
+|---|---|---:|---:|---:|---:|---:|
+| **Standalone `nt_auc_dmc8m` (`QGRU`, zero search!)** vs `ben_nn_auc` | Unseen NT | 1,000 | **+0.88 ± 0.34** | **+0.088 ± 0.050** | 39.0% / 28.5% / 32.5% | 6.0 vs 5.7 ms |
+| **Standalone `nt_auc_dmc8m_fast` (`512→256`, zero search!)** vs `ben_nn_auc` | Unseen NT | 1,000 | **+0.52 ± 0.33** | **+0.064 ± 0.049** | 36.0% / 32.2% / 31.8% | **2.0** vs 4.6 ms |
+| **Standalone `suit_auc_exit2_q` (`QGRU`, zero search!)** vs `ben_nn_auc` | Unseen Suit | 1,000 | +0.23 ± 0.27 | +0.017 ± 0.035 | 28.9% / 43.1% / 28.0% | 6.0 vs 5.6 ms |
+| **Standalone `suit_auc_exit2_fast` (`512→256`, zero search!)** vs `ben_nn_auc` | Unseen Suit | 1,000 | +0.13 ± 0.27 | +0.017 ± 0.032 | 28.4% / 44.5% / 27.1% | **1.8** vs 4.4 ms |
+| **Matched `16w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:16:6` | Unseen Suit | 1,000 | **+0.28 ± 0.22** | **+0.055 ± 0.026** | 26.4% / 54.8% / 18.8% | **96.6** vs 109.6 ms |
+| **Matched `16w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:16:6` | Unseen NT | 1,000 | +0.17 ± 0.27 | **+0.056 ± 0.041** | 32.4% / 42.6% / 25.0% | **107.0** vs 119.2 ms |
+| **Matched `16w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:16:6` | Unseen All-Strain | 1,000 | **+0.42 ± 0.24** | **+0.059 ± 0.032** | 29.3% / 50.5% / 20.2% | **98.4** vs 111.5 ms |
+| **Matched `16w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:16:6` | **Real Unseen BBO** | 292 | **+0.56 ± 0.52** | **+0.074 ± 0.065** | 29.5% / 49.7% / 20.9% | **103.8** vs 115.8 ms |
+| **Pooled `16w:pool=6` across all unseen datasets** vs `ben_dds_auc:16:6` | **All Unseen** | **3,292** | **+0.32 ± 0.14** (`p < 5e-6`) | **+0.058 ± 0.019** (`p < 1e-9`) | **29.4% / 49.3% / 21.3%** | **101.0** vs 113.7 ms |
+| **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | Unseen Suit | 1,000 | **+0.25 ± 0.21** | **+0.062 ± 0.025** | 25.6% / 57.3% / 17.1% | **189.1** vs 225.2 ms |
+| **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | Unseen NT | 1,000 | +0.23 ± 0.26 | **+0.054 ± 0.039** | 31.9% / 44.6% / 23.5% | **206.8** vs 233.1 ms |
+| **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | Unseen All-Strain | 1,000 | +0.20 ± 0.23 | **+0.040 ± 0.030** | 26.4% / 54.0% / 19.6% | **186.5** vs 215.5 ms |
+| **Matched `32w:pool=6` (`bdraw` + `BeliefNet` + `Lead` + `Fast`)** vs `ben_dds_auc:32:6` | **Real Unseen BBO** | 292 | +0.38 ± 0.52 | **+0.072 ± 0.059** | 28.4% / 51.0% / 20.5% | **199.4** vs 224.6 ms |
+| **Pooled `32w:pool=6` across all unseen datasets** vs `ben_dds_auc:32:6` | **All Unseen** | **3,292** | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** (`p = 2e-9`) | **28.0% / 51.9% / 20.1%** | **194.6** vs 224.6 ms |
 
 Full progression, standalone network tables, and ablations are logged permanently in [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 

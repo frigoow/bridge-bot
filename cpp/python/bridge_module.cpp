@@ -41,6 +41,7 @@ PYBIND11_MODULE(bridge_cpp, m) {
     cardbot::bindBatchEnv<BridgeGame, BridgeSuitEncoder>(m, "SuitBatchEnv");
     cardbot::bindBatchEnv<BridgeGame, BridgeNtEncoder>(m, "NtBatchEnv");
     cardbot::bindBatchEnv<BridgeGame, BridgeSuitAucEncoder>(m, "SuitAucBatchEnv");
+    cardbot::bindBatchEnv<BridgeGame, BridgeNtAucEncoder>(m, "NtAucBatchEnv");
     cardbot::bindQGru(m);
     cardbot::bindFastPolicy(m);
     cardbot::bindBeliefModel(m);
@@ -184,6 +185,15 @@ PYBIND11_MODULE(bridge_cpp, m) {
             py::gil_scoped_release rel;
             return scoreWorldsFastLik(g, worlds, opt);
         }
+        py::tuple sample_worlds_belief(const BridgeGame& g, int count, std::uint64_t seed) const {
+            bool enumerated = false;
+            std::vector<BridgeGame> ws;
+            {
+                py::gil_scoped_release rel;
+                ws = sampleWorldsBelief(g, count, opt, seed, &enumerated);
+            }
+            return py::make_tuple(std::move(ws), enumerated);
+        }
     };
     py::class_<PySearchOnWorlds>(m, "SearchOnWorlds")
         .def(py::init([](const std::string& spec) { return PySearchOnWorlds{parseSearchOptions(spec)}; }))
@@ -191,8 +201,12 @@ PYBIND11_MODULE(bridge_cpp, m) {
              py::arg("enumerated") = false)
         .def("score_worlds_belief", &PySearchOnWorlds::score_worlds_belief, py::arg("game"), py::arg("worlds"))
         .def("score_worlds_fast_lik", &PySearchOnWorlds::score_worlds_fast_lik, py::arg("game"), py::arg("worlds"))
+        .def("sample_worlds_belief", &PySearchOnWorlds::sample_worlds_belief, py::arg("game"),
+             py::arg("count") = 64, py::arg("seed") = 1)
         .def_property_readonly("worlds", [](const PySearchOnWorlds& s) { return s.opt.worlds; })
         .def_property_readonly("pool", [](const PySearchOnWorlds& s) { return s.opt.pool; })
+        .def_property_readonly("draw", [](const PySearchOnWorlds& s) { return s.opt.draw; })
+        .def_property_readonly("belief_draw", [](const PySearchOnWorlds& s) { return s.opt.belief_draw; })
         .def_property_readonly("belief_weight", [](const PySearchOnWorlds& s) { return s.opt.belief_weight; })
         .def_property_readonly("pre_lik_weight", [](const PySearchOnWorlds& s) { return s.opt.pre_lik_weight; });
 

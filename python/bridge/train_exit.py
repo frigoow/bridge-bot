@@ -35,7 +35,7 @@ from bridge.suit_perm import SuitPermAugmenter
 
 def main():
     ap = argparse.ArgumentParser(description="Bridge Expert Iteration (ExIt) trainer")
-    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc"], default="all")
+    ap.add_argument("--mode", choices=["all", "suit", "nt", "suit_auc", "nt_auc"], default="all")
     ap.add_argument("--ben-deals", type=str, default=None, help="BDP1 binary pool of BEN-bid deals for suit_auc")
     ap.add_argument("--eval-ben-deals", type=str, default=None, help="BDP1 binary eval set for ben_nn_auc evals")
     ap.add_argument("--deals", type=int, default=2500, help="Total search-played deals to collect")
@@ -67,9 +67,10 @@ def main():
     ap.add_argument("--seed", type=int, default=101)
     args = ap.parse_args()
 
-    sf = {"all": -1, "suit": 0, "nt": 1, "suit_auc": 0}[args.mode]
-    use_pool = (args.mode == "suit_auc") or bool(args.ben_deals)
-    state_dim = bridge_cpp.SuitAucBatchEnv.STATE_DIM if args.mode == "suit_auc" else bridge_cpp.BatchEnv.STATE_DIM
+    sf = {"all": -1, "suit": 0, "nt": 1, "suit_auc": 0, "nt_auc": 1}[args.mode]
+    is_auc = args.mode in ("suit_auc", "nt_auc")
+    use_pool = is_auc or bool(args.ben_deals)
+    state_dim = bridge_cpp.SuitAucBatchEnv.STATE_DIM if is_auc else bridge_cpp.BatchEnv.STATE_DIM
     if args.ben_deals:
         n_pool = bridge_cpp.load_ben_deal_pool(args.ben_deals)
         if n_pool <= 0:
