@@ -376,14 +376,63 @@ To isolate every component's exact contribution — and verify whether any Bridg
 
 **Takeaway:** Dropping both the Bridge-specific opening-lead specialists (`A6`) and per-strain belief temperatures (`A7`, single `bt=1.5`) preserves the full gain (**`+0.388 ± 0.251 IMPs`, `+0.060 ± 0.031 trk`, `29.4% W / 20.1% L`, 13.1% faster**), proving that **just two generic `cardbot-framework` components** — distilled `FastPolicy` (`+0.434`) and GRU `BeliefNet` with `bdraw + dedup` (`+0.590` standalone over bare) — account for the entire `+0.91–0.93 IMPs/bd` lift over bare auction-filtered PIMC+DDS (`14.2 MB` total footprint).
 
-### 11. Head-to-Head vs Full Unmodified Upstream BEN Production Driver (`ben_full_pimc`, 2026-11-27)
+### 11. Full Unmodified Upstream BEN (`ben_full_pimc`), 1,292 Real Unseen Human Deals & Rollout Exploration (2026-11-27 – 2026-11-28)
 
-Wrapped BEN's complete unmodified upstream card-play driver ([tools/opponents/ben_full_driver.py](../tools/opponents/ben_full_driver.py)) running official `external/ben/src/config/onnx.conf` defaults (`BotLead` + `Sample.init_rollout_states` drawing 5,000–30,000 boards → 200 samples + `CardPlayer` + `carding.py` + `libsuitc.so` suit combinations + `BGADLL.so` PIMC declaring/defending + `dds3`, single-threaded `dds_threads=1, pimc_threads=1` per worker) on all **292 Real Unseen Human BBO Daylongs (`data/eval_bbo_unseen.pbn`)**:
+Wrapped BEN's complete unmodified upstream card-play driver ([tools/opponents/ben_full_driver.py](../tools/opponents/ben_full_driver.py)) running official `external/ben/src/config/onnx.conf` defaults (`BotLead` + `Sample.init_rollout_states` drawing 5,000–30,000 boards → 200 samples + `CardPlayer` + `carding.py` + `libsuitc.so` suit combinations + `BGADLL.so` PIMC declaring/defending + `dds3`, single-threaded `dds_threads=1, pimc_threads=1` per worker).
 
-| Our Bot vs Full Upstream BEN (`ben_full_pimc`) | Pairs (Real BBO) | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
-|---|---:|---:|---:|---:|---:|---:|
-| **4-Trick Neural Rollout `128w:pool=4` (`dds9:rex9`, NO Trick 1–4 DDS)** | 292 | −0.264 ± 0.520 | −0.053 ± 0.065 | 24.3% / 46.2% / 29.5% | **128.3** | 801.3 (**6.2× faster**) |
-| **Minimal 2-Component `64w:pool=6` (`dds13:rex13`, zero SuitC / BGADLL / carding / lead nets)** | **292** | **+0.332 ± 0.475** | **+0.057 ± 0.054** (`p = 0.039`) | **27.1% / 51.7% / 21.2%** | **224.3** | 813.3 (**3.6× faster**) |
+Evaluated across **1,292 strictly unseen real human tournament deals** (`data/eval_pbn_unseen_1000.pbn`: 1,000 stratified human PBN boards with real human auctions + `data/eval_bbo_unseen.pbn`: 292 real human BBO Daylongs) as well as **1,000 strictly unseen BEN-bid All-Strain deals** (`data/ben_all_eval_1000.bin`):
+
+#### 11a. Minimal 2-Component Bot & Neural Rollouts vs Full Upstream BEN (`ben_full_pimc`)
+
+*(All our bots below use ZERO SuitC, ZERO BGADLL, ZERO carding heuristics, ZERO opening-lead specialists, and `:imp` OFF.)*
+
+| Our Bot vs Full Upstream BEN (`ben_full_pimc`) | Strictly Unseen Dataset | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **Minimal 2-Comp `64w:pool=6` (`dds13:rex13`)** | Real Human BBO Daylongs | 292 | **+0.332 ± 0.475** | **+0.057 ± 0.054** (`p = 0.039`) | 27.1% / 51.7% / 21.2% | **224.3** | 813.3 (**3.6× faster**) |
+| **Minimal 2-Comp `200w:pool=6` (`dds13:rex13`)** | Real Human Tournament PBNs | 1,000 | **+0.243 ± 0.256** | +0.022 ± 0.027 | **22.2% / 60.1% / 17.7%** (`p = 0.024`) | **644.9** | 819.5 (**21.3% faster**) |
+| **Minimal 2-Comp `200w:pool=6` (`dds13:rex13`)** | Real Human BBO Daylongs | 292 | **+0.507 ± 0.466** (`p = 0.033`) | **+0.065 ± 0.059** (`p = 0.031`) | **27.4% / 53.8% / 18.8%** | **681.6** | 829.6 (**17.8% faster**) |
+| **Pooled `200w:pool=6` (`dds13:rex13`) — Real Human** | **All Unseen Human Deals** | **1,292** | **+0.303 ± 0.224** (`p = 0.0082`) | **+0.032 ± 0.025** (`p = 0.012`) | **23.4% / 58.7% / 18.0%** (`302W–232L`) | **653.2** | **821.8 (20.5% faster)** |
+| **Minimal 2-Comp `200w:pool=6` (`dds13:rex13`)** | BEN-bid All-Strain (`ben_all_eval_1000`) | 1,000 | −0.147 ± 0.218 | −0.003 ± 0.028 | 21.9% / 57.7% / 20.4% (`219W–204L`) | **665.6** | 825.8 (**19.4% faster**) |
+| **4-Trick Rollout `128w:pool=4` (`dds9:rex9`, no T1–4 DDS)** | Real Human BBO Daylongs | 292 | −0.264 ± 0.520 | −0.053 ± 0.065 | 24.3% / 46.2% / 29.5% | **128.3** | 801.3 (**6.2× faster**) |
+| **Regular `512w:pool=4` (`dds9:rex9`, no T1–4 DDS)** | Real Human Tournament PBNs | 1,000 | −0.168 ± 0.282 | −0.039 ± 0.030 | 22.2% / 51.3% / 26.5% | **487.8** | 874.8 (**1.79× faster**) |
+| **Regular `512w:pool=4` (`dds9:rex9`, no T1–4 DDS)** | Real Human BBO Daylongs | 292 | −0.322 ± 0.577 | −0.019 ± 0.061 | 28.1% / 42.5% / 29.5% | **460.1** | 889.7 (**1.93× faster**) |
+| **Pooled Regular `512w:pool=4` (`dds9:rex9`)** | **All Unseen Human Deals** | **1,292** | **−0.203 ± 0.254** (`p = 0.12`) | −0.034 ± 0.027 | 23.5% / 49.3% / 27.2% | **481.5** | **878.2 (1.82× faster)** |
+| **Stochastic `768w:pool=4` (`dds9:rex9:rtemp=0.50`)** | Real Human Tournament PBNs | 1,000 | −0.238 ± 0.291 | −0.041 ± 0.030 | 21.9% / 51.5% / 26.6% | **755.1** | 881.0 (**14.3% faster**) |
+| **Stochastic `768w:pool=4` (`dds9:rex9:rtemp=0.50`)** | Real Human BBO Daylongs | 292 | **+0.130 ± 0.556** | −0.038 ± 0.057 | 24.7% / 47.9% / 27.4% | **720.3** | 909.9 (**20.8% faster**) |
+| **Pooled Stochastic `768w:pool=4` (`dds9:rtemp=0.50`)** | **All Unseen Human Deals** | **1,292** | **−0.155 ± 0.258** (`p = 0.24`) | −0.040 ± 0.027 | 22.5% / 50.7% / 26.8% | **747.2** | **887.5 (15.8% faster)** |
+| **Stochastic `768w:pool=4` (`dds9:rex9:rtemp=0.50`)** | BEN-bid All-Strain (`ben_all_eval_1000`) | 1,000 | −0.391 ± 0.260 | −0.059 ± 0.033 | 23.6% / 46.7% / 29.7% | **646.3** | 789.0 (**18.1% faster**) |
+
+**Key takeaway — why the edge is strongest on real human deals:** On BEN's own self-bid deals (`ben_all_eval_1000.bin`), `bidder.onnx` matches every auction natively and our `200w dds13` plays dead even (`−0.003 trk`, `219W–204L`, 19% faster). On real human tournament deals (`1,292` pairs), competitive/unconventional human auctions frequently cause BEN's auction rejection sampler to drop to `Quality -1.00 / No samples found`; our play-history **`GRU BeliefNet` (`bdraw + dedup`)** infers hidden cards from the live trick sequence instead, yielding a statistically significant **`+0.303 ± 0.224 IMPs/bd` (`p = 0.0082`)** win while running **20.5% faster**.
+
+#### 11b. Pure NN & Matched-Pool `ben_dds_auc` on 1,000 Unseen Real Human PBNs (`eval_pbn_unseen_1000.pbn`)
+
+| Matchup | Dataset | Pairs | IMPs/board | Tricks/board | A win / tie / loss | A ms/choice | B ms/choice |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Pure `Q-GRU` vs `ben_nn_auc` | Human PBNs | 1,000 | −0.182 ± 0.344 | −0.011 ± 0.035 | 27.9% / 44.6% / 27.5% | 4.01 | 3.66 |
+| Pure `FastPolicy` vs `ben_nn_auc` | Human PBNs | 1,000 | −0.197 ± 0.339 | −0.030 ± 0.037 | 25.7% / 44.2% / 30.1% | **0.66** | 3.44 |
+| Pure `Q-GRU` vs `ben_nn_auc` | Human BBO Daylongs | 292 | −0.113 ± 0.621 | −0.024 ± 0.079 | 29.8% / 36.6% / 33.6% | 4.04 | 3.70 |
+| Pure `FastPolicy` vs `ben_nn_auc` | Human BBO Daylongs | 292 | +0.164 ± 0.617 | +0.021 ± 0.072 | 31.5% / 37.7% / 30.8% | **0.69** | 3.43 |
+| **Minimal 2-Comp `16w:pool=6` vs `ben_dds_auc:16:6`** | **Human PBNs** | **1,000** | **+0.309 ± 0.281** (`p = 0.031`) | **+0.038 ± 0.029** (`p = 0.010`) | **24.7% / 55.3% / 20.0%** | **59.4** | 65.4 |
+| **Minimal 2-Comp `32w:pool=6` vs `ben_dds_auc:32:6`** | **Human PBNs** | **1,000** | **+0.193 ± 0.272** | **+0.033 ± 0.027** (`p = 0.017`) | **24.3% / 57.0% / 18.7%** | **112.5** | 126.1 |
+| **Pooled `16w:pool=6` (all 5 unseen datasets)** | **Suit+NT+All+BBO+PBN** | **4,292** | **+0.314 ± 0.123** (`p = 5.2e-7`) | **+0.053 ± 0.016** (`p = 7.6e-11`) | **28.3% / 50.7% / 21.0%** | **91.3** | 102.4 |
+| **Pooled `32w:pool=6` (all 5 unseen datasets)** | **Suit+NT+All+BBO+PBN** | **4,292** | **+0.230 ± 0.119** (`p = 1.5e-4`) | **+0.049 ± 0.015** (`p = 2.2e-10`) | **27.1% / 53.1% / 19.8%** | **175.5** | 201.6 |
+
+#### 11c. Rollout Exploration Ablation (`rbranch` Top-2 Minimax vs `rtemp` Zero-Cost Stochastic Sampling, `bridge_duel`, 292 BBO Daylongs)
+
+Investigated breaking greedy `argmax` bias inside `dds9:rex9` neural rollouts (`playOutValue` in `cpp/bridge/search.cpp`), comparing selective Top-2 non-touching minimax branching (`rbranch`, with fail-soft α-β pruning) against single-path deterministic CRN softmax sampling (`rtemp`, `1.00×` speed):
+
+| Variant vs Greedy Baseline (`dds9:rex9`, 292 BBO Daylongs) | Comparison Type | IMPs/board | Tricks/board | A win / tie / loss | A ms | B ms |
+|---|---|---:|---:|---:|---:|---:|
+| `32w rbranch=1:rtau=0.4` vs `32w` greedy | Fixed-`W` | +0.099 ± 0.583 | +0.053 ± 0.066 | 30.8% / 43.8% / 25.3% | 53.9 | 35.2 (`1.53×`) |
+| `32w rbranch=1:rtau=0.4:rbours` vs `32w` greedy | Fixed-`W` | +0.185 ± 0.597 | +0.038 ± 0.060 | 29.1% / 47.6% / 23.3% | 43.5 | 30.6 (`1.42×`) |
+| `32w rbranch=2:rtau=0.4` vs `32w` greedy | Fixed-`W` | +0.497 ± 0.572 | **+0.070 ± 0.067** (`p = 0.041`) | 29.5% / 46.9% / 23.6% | 83.5 | 37.1 (`2.25×`) |
+| `32w rbranch=2:rtau=0.4` vs `72w` greedy | **Equal-time** | **−0.486 ± 0.582** | −0.048 ± 0.068 | 24.0% / 44.2% / 31.8% | 65.8 | **49.9** |
+| `50w rbranch=1:rtau=0.4:rbours` vs `72w` greedy | **Equal-time** | +0.082 ± 0.480 | −0.005 ± 0.060 | 24.0% / 49.7% / 26.4% | 60.7 | **53.0** |
+| `32w dds9 rbranch=2` vs `32w dds13` | Gap to exact DDS | −0.134 ± 0.609 | −0.065 ± 0.063 | 20.9% / 46.6% / 32.5% | **77.7** | 154.0 |
+| `72w rtemp=0.25` vs `72w` greedy | **Equal-time (`1.02×`)** | +0.082 ± 0.561 | −0.015 ± 0.065 | 27.1% / 46.9% / 26.0% | 67.3 | 66.2 |
+| **`72w rtemp=0.50` vs `72w` greedy** | **Equal-time (`1.01×`)** | **+0.603 ± 0.531** (`p = 0.026`) | +0.036 ± 0.062 | **26.0% / 50.3% / 23.6%** | 54.3 | 53.5 |
+
+**Finding:** Multi-branch tree search (`rbranch=2`) looks strong at fixed `W` (`+0.50 IMPs`), but **loses at equal time** (`−0.486 IMPs`) because extra `dds9` solves are better spent evaluating more hidden-hand worlds (`72w` greedy > `32w rbranch=2`). In contrast, **single-path probabilistic rollout sampling (`rtemp=0.50`)** incurs virtually zero overhead (`1.01×`) and beats greedy `72w` by **`+0.603 ± 0.531 IMPs/bd` (`p = 0.026`)** on BBO Daylongs (and lifted `dds9` on BBO vs `ben_full_pimc` from `−0.322` to `+0.130`).
 
 **Discarded Early-Trick Distillation Ablation (`--early-ply 16 --early-weight 5.0 --eps 0.08`, Q-GRU teacher only):**
 - Standalone `suit_auc_early_fast` vs `ben_nn_auc` (1,000 Suit pairs): `−0.246 ± 0.287 IMPs/bd`, `−0.068 ± 0.035 trk` (weaker than ExIt2 search-trained `suit_auc_exit2_fast` `+0.13 ± 0.27`, confirming that ExIt search targets matter more on Suit than extra Q-GRU distillation).

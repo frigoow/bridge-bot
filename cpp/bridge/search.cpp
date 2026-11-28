@@ -71,13 +71,97 @@ int fastPolicyCard(const cardbot::FastPolicyModel& model, const BridgeGame& g) {
     return best;
 }
 
+inline double uniformFromHash(std::uint64_t seed, int ply) {
+    std::uint64_t z = seed ^ (static_cast<std::uint64_t>(ply + 1) * 0x9e3779b97f4a7c15ULL);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    z ^= (z >> 31);
+    return double(z >> 11) * (1.0 / 9007199254740992.0);
+}
+
+inline std::uint64_t worldRolloutSeed(const BridgeGame& wg, std::size_t w_idx) {
+    return (wg.hand(0) * 0x9e3779b97f4a7c15ULL) ^ (wg.hand(1) * 0xbf58476d1ce4e5b9ULL) ^
+           (wg.hand(2) * 0x94d049bb133111ebULL) ^ static_cast<std::uint64_t>(w_idx + 1);
+}
+
+int sampleFastPolicyCard(const cardbot::FastPolicyModel& model, const BridgeGame& g, double rtemp,
+                         std::uint64_t world_seed) {
+    const auto legal = g.legalActions();
+    if (legal.size() == 1) return legal[0];
+    const int cur_seat = g.toMove();
+    const int strain = g.contract().strain;
+    thread_local std::vector<float> state(kBridgeAucStateDim), logits;
+    state.resize(std::size_t(model.stateDim()));
+    logits.resize(std::size_t(model.outDim()));
+    encodeBridgeStateForDim(g, cur_seat, model.stateDim(), state.data(), nullptr);
+    model.forward(state.data(), logits.data());
+
+    // Keep highest-logit representative of each touching-equivalent group so sequences aren't overweighted.
+    Mask sep_mask = 0;
+    for (int s = 0; s < 4; ++s) {
+        if (s != cur_seat) sep_mask |= g.hand(s);
+    }
+    const auto& hist = g.history();
+    const int n_plies = g.nPlies();
+    for (int p = (n_plies / 4) * 4; p < n_plies; ++p) {
+        sep_mask |= bit(int(hist[std::size_t(p)].card));
+    }
+
+    int rep_cards[13];
+    double rep_logits[13];
+    int n_rep = 0;
+    int prev_c = kNoCard;
+    for (int c : legal) {
+        const double l = double(logits[std::size_t(canonCard(c, strain))]);
+        bool touching_prev = false;
+        if (prev_c != kNoCard && suitOf(prev_c) == suitOf(c)) {
+            const Mask between = ((Mask(1) << c) - 1) & ~((Mask(1) << (prev_c + 1)) - 1);
+            touching_prev = ((sep_mask & between) == 0);
+        }
+        if (touching_prev && n_rep > 0) {
+            if (l > rep_logits[n_rep - 1]) {
+                rep_logits[n_rep - 1] = l;
+                rep_cards[n_rep - 1] = c;
+            }
+        } else {
+            rep_cards[n_rep] = c;
+            rep_logits[n_rep] = l;
+            ++n_rep;
+        }
+        prev_c = c;
+    }
+    if (n_rep == 1) return rep_cards[0];
+
+    const double inv_t = 1.0 / std::max(rtemp, 1e-4);
+    double mx = rep_logits[0];
+    for (int i = 1; i < n_rep; ++i)
+        if (rep_logits[i] > mx) mx = rep_logits[i];
+    double probs[13];
+    double sum = 0.0;
+    for (int i = 0; i < n_rep; ++i) {
+        const double w = std::exp(std::max(-40.0, (rep_logits[i] - mx) * inv_t));
+        probs[i] = w;
+        sum += w;
+    }
+    double u = uniformFromHash(world_seed, n_plies) * sum;
+    for (int i = 0; i < n_rep - 1; ++i) {
+        u -= probs[i];
+        if (u <= 0.0) return rep_cards[i];
+    }
+    return rep_cards[n_rep - 1];
+}
+
 double playOutValue(BridgeGame g, int seat, const cardbot::FastPolicyModel* fast, int endgame_tricks,
-                    bool use_dds_endgame) {
+                    bool use_dds_endgame, int rbranch = 0, float rtau = 0.4f, bool rbranch_ours = false,
+                    double rtemp = 0.0, std::uint64_t world_seed = 0,
+                    double alpha = -1e30, double beta = 1e30) {
+    const int my_team = g.team(seat);
+    const int strain = g.contract().strain;
     while (!g.finished()) {
         if (endgame_tricks > 0 && g.tricksRemaining() <= endgame_tricks) {
             if (use_dds_endgame) {
                 const int total_decl = ddsTotalDeclarerTricks(g);
-                const bool seat_is_decl = (g.team(seat) == g.contract().declarerTeam());
+                const bool seat_is_decl = (my_team == g.contract().declarerTeam());
                 if (g.payoffMode() == BridgeGame::PayoffMode::kTricks) {
                     const int my_tr = seat_is_decl ? total_decl : (13 - total_decl);
                     return double(my_tr) - 6.5;
@@ -89,7 +173,80 @@ double playOutValue(BridgeGame g, int seat, const cardbot::FastPolicyModel* fast
                 return solver.value(g, seat);
             }
         }
-        const int card = fast ? fastPolicyCard(*fast, g) : ruleCard(g);
+        if (rbranch > 0 && fast != nullptr) {
+            const auto legal = g.legalActions();
+            if (legal.size() == 1) {
+                g.apply(legal[0]);
+                continue;
+            }
+            const int cur_seat = g.toMove();
+            thread_local std::vector<float> state(kBridgeAucStateDim), logits;
+            state.resize(std::size_t(fast->stateDim()));
+            logits.resize(std::size_t(fast->outDim()));
+            encodeBridgeStateForDim(g, cur_seat, fast->stateDim(), state.data(), nullptr);
+            fast->forward(state.data(), logits.data());
+
+            int best_c = legal[0];
+            float best_l = -1e30f;
+            for (int c : legal) {
+                const float l = logits[std::size_t(canonCard(c, strain))];
+                if (l > best_l) {
+                    best_l = l;
+                    best_c = c;
+                }
+            }
+            const bool is_my_team = (g.team(cur_seat) == my_team);
+            if (!rbranch_ours || is_my_team) {
+                Mask sep_mask = 0;
+                for (int s = 0; s < 4; ++s) {
+                    if (s != cur_seat) sep_mask |= g.hand(s);
+                }
+                const auto& hist = g.history();
+                const int n_plies = g.nPlies();
+                for (int p = (n_plies / 4) * 4; p < n_plies; ++p) {
+                    sep_mask |= bit(int(hist[std::size_t(p)].card));
+                }
+                auto is_touching = [&](int a, int b) -> bool {
+                    if (suitOf(a) != suitOf(b)) return false;
+                    const int lo = std::min(a, b);
+                    const int hi = std::max(a, b);
+                    const Mask between = ((Mask(1) << hi) - 1) & ~((Mask(1) << (lo + 1)) - 1);
+                    return (sep_mask & between) == 0;
+                };
+                int second_c = kNoCard;
+                float second_l = -1e30f;
+                for (int c : legal) {
+                    if (c == best_c || is_touching(c, best_c)) continue;
+                    const float l = logits[std::size_t(canonCard(c, strain))];
+                    if (l > second_l) {
+                        second_l = l;
+                        second_c = c;
+                    }
+                }
+                if (second_c != kNoCard && (best_l - second_l) <= rtau) {
+                    BridgeGame g1 = g;
+                    g1.apply(best_c);
+                    const double v1 = playOutValue(std::move(g1), seat, fast, endgame_tricks, use_dds_endgame,
+                                                   rbranch - 1, rtau, rbranch_ours, rtemp, world_seed, alpha, beta);
+                    if (is_my_team) {
+                        if (v1 > alpha) alpha = v1;
+                        if (alpha >= beta) return v1;
+                    } else {
+                        if (v1 < beta) beta = v1;
+                        if (alpha >= beta) return v1;
+                    }
+                    g.apply(second_c);
+                    const double v2 = playOutValue(std::move(g), seat, fast, endgame_tricks, use_dds_endgame,
+                                                   rbranch - 1, rtau, rbranch_ours, rtemp, world_seed, alpha, beta);
+                    return is_my_team ? std::max(v1, v2) : std::min(v1, v2);
+                }
+            }
+            g.apply(best_c);
+            continue;
+        }
+        const int card = fast ? (rtemp > 0.0 ? sampleFastPolicyCard(*fast, g, rtemp, world_seed)
+                                             : fastPolicyCard(*fast, g))
+                              : ruleCard(g);
         g.apply(card);
     }
     return g.payoff(seat);
@@ -447,6 +604,7 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
             }
             return;
         }
+        const std::uint64_t wseed = worldRolloutSeed(ws.states[w], w);
         if (!tgroup.empty()) {
             std::array<double, kCards> gval{};
             std::array<char, kCards> gdone{};
@@ -457,7 +615,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
                     BridgeGame next = ws.states[w];
                     next.apply(legal[i]);
                     gval[std::size_t(gi)] =
-                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                     opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                     opt.rollout_temp, wseed);
                     gdone[std::size_t(gi)] = 1;
                 }
                 val[i * nw + w] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
@@ -468,7 +628,9 @@ SearchResult searchCard(const BridgeGame& g, const SearchOptions& opt, std::mt19
             if (!alive[i]) continue;
             BridgeGame next = ws.states[w];
             next.apply(legal[i]);
-            val[i * nw + w] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+            val[i * nw + w] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                           opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                           opt.rollout_temp, wseed);
         }
     };
 
@@ -683,6 +845,7 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
             }
             return;
         }
+        const std::uint64_t wseed = worldRolloutSeed(worlds[w], w);
         if (!tgroup.empty()) {
             std::array<double, kCards> gval{};
             std::array<char, kCards> gdone{};
@@ -693,7 +856,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
                     BridgeGame next = worlds[w];
                     next.apply(legal[i]);
                     gval[std::size_t(gi)] =
-                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                     opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                     opt.rollout_temp, wseed);
                     gdone[std::size_t(gi)] = 1;
                 }
                 val[i * nw + w] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
@@ -704,7 +869,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
             if (!alive[i]) continue;
             BridgeGame next = worlds[w];
             next.apply(legal[i]);
-            val[i * nw + w] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+            val[i * nw + w] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                           opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                           opt.rollout_temp, wseed);
         }
     };
 
@@ -768,6 +935,7 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
             return;
         }
         const std::size_t orig = order[wi];
+        const std::uint64_t wseed = worldRolloutSeed(worlds[orig], orig);
         if (!tgroup.empty()) {
             std::array<double, kCards> gval{};
             std::array<char, kCards> gdone{};
@@ -778,7 +946,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
                     BridgeGame next = worlds[orig];
                     next.apply(legal[i]);
                     gval[std::size_t(gi)] =
-                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+                        playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                     opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                     opt.rollout_temp, wseed);
                     gdone[std::size_t(gi)] = 1;
                 }
                 val[i * nw + wi] = gval[std::size_t(gi)] - 1e-6 * double(rankOf(legal[i]));
@@ -789,7 +959,9 @@ SearchResult searchCardOnWorlds(const BridgeGame& g, const std::vector<BridgeGam
             if (!alive[i]) continue;
             BridgeGame next = worlds[orig];
             next.apply(legal[i]);
-            val[i * nw + wi] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame);
+            val[i * nw + wi] = playOutValue(std::move(next), seat, fast, opt.endgame_tricks, opt.use_dds_endgame,
+                                            opt.rollout_branch, float(opt.rollout_tau), opt.rollout_branch_ours,
+                                            opt.rollout_temp, wseed);
         }
     };
 

@@ -31,6 +31,10 @@ struct SearchOptions {
     bool use_dds_endgame = true;  // true: Bo Haglund's DDS; false: cardbot::EndgameSolver
     bool imp_objective = false;   // true: rank moves by E[-impFromDiff(opt(w) - ds(m, w))] instead of raw E[ds]
     bool collapse_touching = false;  // collapse equivalent touching legal cards during rollouts (~2x faster)
+    int rollout_branch = 0;          // > 0: selective Top-2 minimax branching budget per rollout path
+    double rollout_tau = 0.4;        // branch when top-2 distinct policy logits are within <= rollout_tau
+    bool rollout_branch_ours = false; // true: branch only on our own team's turns (max-only); false: symmetric minimax
+    double rollout_temp = 0.0;       // > 0: single-path softmax(logit/T) sampling over distinct moves in rollouts (1.0x cost!)
     bool belief_draw = false;     // draw external proposal worlds from BeliefModel via sampleWeighted
     bool race = true;
     int race_min = 16;

@@ -50,13 +50,13 @@ We evaluate against [**BEN**](https://github.com/lorserker/ben) (GPL-3.0, fetche
 - **`ben_nn_auc` / `ben_dds_auc` ([tools/opponents/ben_player.py](tools/opponents/ben_player.py)):** Runs BEN's unmodified pretrained ONNX networks (`bidder`, `bidinfo`, `lead_suit`, `lead_nt`, `suit[0..3]`, `nt[0..3]`) paired with Bo Haglund's DDS under matched `W × 6` candidate budgets (`nn_weight=20.0`, `auc_weight=0.45`).
 - **`ben_full_pimc` ([tools/opponents/ben_full_driver.py](tools/opponents/ben_full_driver.py)):** Runs BEN's complete unmodified upstream `config/onnx.conf` production driver (`BotLead`, `Sample.init_rollout_states` drawing 5,000–30,000 boards → 200 samples, `CardPlayer`, `carding.py`, `libsuitc.so` suit combinations, `BGADLL.so` PIMC declaring/defending, and `dds3`, single-threaded per worker).
 - **How Bidding Info Is Used:** In shared-auction comparisons, **both** bots share BEN's exact `bidder.onnx` (exact Bayesian auction log-likelihood ranking over candidate worlds) and `bidinfo.onnx` (15 canonicalized HCP/suit-length summary floats read by our `Q-GRU`, `FastPolicy`, and `BeliefNet`), isolating 100% pure card play. For zero-BEN standalone play, our own 1.2 MB C++ [AuctionModel](cpp/bridge/auction_model.h) (`checkpoints/auction_v1.bin`) replaces `bidder.onnx`.
-- **Strictly Unseen Holdouts:** Every evaluation set is strictly disjoint from training — 1,000 unseen BEN-bid Suit deals (`seed=999999`), 1,000 unseen BEN-bid NT deals (`seed=999999`), 1,000 unseen natural All-Strain deals (`seed=888888`, 782 Suit + 218 NT), and **292 real human/GIB BBO Daylong boards** (`eval_bbo_unseen.pbn`, zero BBO boards in training).
+- **Strictly Unseen Holdouts:** Every evaluation set is strictly disjoint from training — 1,000 unseen BEN-bid Suit deals (`seed=999999`), 1,000 unseen BEN-bid NT deals (`seed=999999`), 1,000 unseen natural All-Strain deals (`seed=888888`, 782 Suit + 218 NT), and **1,292 real unseen human tournament deals** with full human auctions (**1,000** stratified tournament PBNs in `eval_pbn_unseen_1000.pbn` + **292** real BBO Daylongs in `eval_bbo_unseen.pbn`, zero human/BBO boards in training).
 
 ---
 
 ## Results
 
-Mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1 core per deal) against [BEN](https://github.com/lorserker/ben)'s unmodified ONNX networks (`ben_nn_auc`) and ONNX+DDS engine (`ben_dds_auc`) with identical `bidder.onnx` and `W × 6` world budgets:
+Mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1 core per deal) against [BEN](https://github.com/lorserker/ben)'s unmodified ONNX networks (`ben_nn_auc`), ONNX+DDS engine (`ben_dds_auc`, identical `bidder.onnx` & `W × 6` pool), and complete upstream production driver (`ben_full_pimc`):
 
 | Matchup (Strictly Unseen Deals) | Mode | Pairs | IMPs/board | Tricks/board | Speed (ours vs BEN) |
 |---|---|---:|---:|---:|---:|
@@ -64,12 +64,14 @@ Mirrored duplicate deals (WBF IMPs/board and tricks/board ± 95% CI, 1 core vs 1
 | **NT `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | **+0.52 ± 0.33** (`p = 0.002`) | **+0.064 ± 0.049** | **2.0** vs 4.6 ms |
 | **Suit `Q-GRU`** vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.23 ± 0.27 | +0.017 ± 0.035 | 6.0 vs 5.6 ms |
 | **Suit `FastPolicy`** (`512→256`) vs `ben_nn_auc` | NN vs NN *(zero search)* | 1,000 | +0.13 ± 0.27 | +0.017 ± 0.032 | **1.8** vs 4.4 ms |
-| **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.32 ± 0.14** (`p = 5e-6`) | **+0.058 ± 0.019** | **101** vs 114 ms |
-| **Full Bot (`32w`)** vs `ben_dds_auc:32:6` | All unseen *(Suit+NT+All+BBO)* | 3,292 | **+0.24 ± 0.13** (`p = 3e-4`) | **+0.054 ± 0.018** | **195** vs 225 ms |
-| **Full Bot (`16w`)** vs `ben_dds_auc:16:6` | **Real Unseen BBO Daylongs** | 292 | **+0.56 ± 0.52** (`p = 0.034`) | **+0.074 ± 0.065** | **104** vs 116 ms |
-| **Minimal Bot (`64w`)** vs **Full Upstream BEN (`ben_full_pimc`)** | **Real Unseen BBO Daylongs** | 292 | **+0.33 ± 0.48** | **+0.057 ± 0.054** (`p = 0.039`) | **224** vs 813 ms (**3.6× faster**) |
+| **Search Bot (`16w`)** vs `ben_dds_auc:16:6` | All 5 unseen sets *(Suit+NT+All+Human)* | 4,292 | **+0.31 ± 0.12** (`p = 5.2e-7`) | **+0.053 ± 0.016** | **91** vs 102 ms |
+| **Search Bot (`32w`)** vs `ben_dds_auc:32:6` | All 5 unseen sets *(Suit+NT+All+Human)* | 4,292 | **+0.23 ± 0.12** (`p = 1.5e-4`) | **+0.049 ± 0.015** | **176** vs 202 ms |
+| **Minimal 2-Comp (`200w`, `dds13`)** vs **`ben_full_pimc`** | **All Real Unseen Human Deals** *(1,000 PBN + 292 BBO)* | **1,292** | **+0.30 ± 0.22** (`p = 0.0082`) | **+0.032 ± 0.025** (`p = 0.012`) | **653** vs 822 ms (**20.5% faster**) |
+| **4-Trick Rollout (`512w`, `dds9`, no T1–4 DDS)** vs **`ben_full_pimc`** | **All Real Unseen Human Deals** *(1,000 PBN + 292 BBO)* | **1,292** | −0.20 ± 0.25 (`p = 0.12`, even) | −0.034 ± 0.027 | **482** vs 878 ms (**1.82× faster**) |
 
-For full per-strain breakdowns, the 1,000-pair component ablation (`FastPolicy` + `BeliefNet` `bdraw` accounting for `+0.93 IMPs/bd` over bare PIMC+DDS), neural rollout (`dds9`) & endgame sweeps (`dds0 → dds13`), and multi-core latency scaling, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+*(On BEN's own self-bid `ben_all_eval_1000.bin`, minimal `200w dds13` plays statistically even with `ben_full_pimc` at `−0.15 ± 0.22 IMPs`, `−0.003 trk`, `219W–204L`, `666` vs `826 ms`. On real human auctions where BEN's auction filter falls back, `BeliefNet` `bdraw + dedup` recovers the hidden-card posterior from the live trick sequence.)*
+
+For full per-strain breakdowns, the 1,000-pair component ablation (`FastPolicy` + `BeliefNet` `bdraw` accounting for `+0.93 IMPs/bd` over bare PIMC+DDS), neural rollout (`dds9`, `rtemp`, `rbranch`) & endgame sweeps, and multi-core latency scaling, see [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ---
 

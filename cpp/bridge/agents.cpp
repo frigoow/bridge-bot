@@ -130,6 +130,14 @@ SearchOptions parseSearchOptions(const std::string& spec) {
             o.collapse_touching = true;
         } else if (p == "nocollapse") {
             o.collapse_touching = false;
+        } else if (p.rfind("rbranch=", 0) == 0) {
+            o.rollout_branch = std::max(0, std::stoi(p.substr(8)));
+        } else if (p.rfind("rtau=", 0) == 0) {
+            o.rollout_tau = std::stod(p.substr(5));
+        } else if (p == "rbours") {
+            o.rollout_branch_ours = true;
+        } else if (p.rfind("rtemp=", 0) == 0) {
+            o.rollout_temp = std::max(0.0, std::stod(p.substr(6)));
         } else if (p == "bdraw") {
             o.belief_draw = true;
         } else if (p == "imp") {
